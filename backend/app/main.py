@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -9,6 +9,7 @@ from openai import OpenAI
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+SECRET_KEY = os.getenv("SECRET_KEY")
 
 # ----------------------------
 # Request model
@@ -27,11 +28,18 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # OK for now
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ----------------------------
+# Security
+# ----------------------------
+def verify_api_key(x_api_key: str = Header(None)):
+    if not SECRET_KEY or x_api_key != SECRET_KEY:
+        raise HTTPException(status_code=403, detail="Access denied")
 
 # ----------------------------
 # Prompt builder
@@ -71,7 +79,9 @@ User request:
 # API endpoint
 # ----------------------------
 @app.post("/generate-sql")
-def generate_sql(req: SQLRequest):
+def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
+    verify_api_key(x_api_key)
+
     try:
         prompt = build_prompt(req)
 
@@ -84,7 +94,6 @@ def generate_sql(req: SQLRequest):
         )
 
         sql = response.choices[0].message.content.strip()
-
         return {"sql": sql}
 
     except Exception as e:
