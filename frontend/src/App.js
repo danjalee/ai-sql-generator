@@ -106,7 +106,7 @@ function App() {
     setOutput("");
 
     try {
-      const res = await fetch("http://localhost:8000/generate-sql", {
+      const res = await fetch("https://ai-sql-generator-rh5f.onrender.com/generate-sql", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
