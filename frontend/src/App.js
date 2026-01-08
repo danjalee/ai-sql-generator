@@ -15,7 +15,7 @@ function getSecretKey() {
 const TEXT = {
   en: {
     title: "AI SQL Generator",
-    appLanguage: "🌐 App Language",
+    appLanguage: "🌐 Language",
     databaseType: "🗄️ Database Type",
     sqlMode: "✍ SQL Mode",
     readMode: "Read (SELECT)",
