@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import "./App.css";
 
 /* ===============================
@@ -26,6 +26,9 @@ const TEXT = {
     generating: "Generating...",
     clear: "🧹 Clear All",
     output: "📤 SQL Output",
+    copy: "📋 Copy",
+    copied: "Copied!",
+    stop: "🛑 Stop",
     schemaPlaceholder:
 `-- Paste CREATE TABLE statements here
 -- Multiple tables supported`,
@@ -46,6 +49,9 @@ const TEXT = {
     generating: "生成中...",
     clear: "🧹 全てクリア",
     output: "📤 SQL 出力",
+    copy: "📋 コピー",
+    copied: "コピー済み",
+    stop: "🛑 停止",
     schemaPlaceholder:
 `-- CREATE TABLE 文を貼り付けてください
 -- 複数テーブル対応`,
@@ -68,6 +74,9 @@ function App() {
   const [criteria, setCriteria] = useState("");
   const [output, setOutput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const controllerRef = useRef(null);
 
   const t = TEXT[appLang];
 
@@ -94,6 +103,17 @@ function App() {
     setOutput("");
   };
 
+  const stopGenerating = () => {
+    controllerRef.current?.abort();
+    setLoading(false);
+  };
+
+  const copyOutput = () => {
+    navigator.clipboard.writeText(output);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
   const generateSQL = async () => {
     if (!schema.trim() || !criteria.trim()) {
       alert(t.requiredAlert);
@@ -102,31 +122,38 @@ function App() {
 
     if (sqlMode === "write" && !window.confirm(t.writeWarning)) return;
 
+    controllerRef.current = new AbortController();
     setLoading(true);
     setOutput("");
 
     try {
-      const res = await fetch("https://ai-sql-generator-rh5f.onrender.com/generate-sql", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-API-Key": apiKey
-        },
-        body: JSON.stringify({
-          language: appLang,
-          database: dbType,
-          sqlMode,
-          schema,
-          criteria
-        })
-      });
+      const res = await fetch(
+        "https://ai-sql-generator-rh5f.onrender.com/generate-sql",
+        {
+          method: "POST",
+          signal: controllerRef.current.signal,
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": apiKey
+          },
+          body: JSON.stringify({
+            language: appLang,
+            database: dbType,
+            sqlMode,
+            schema,
+            criteria
+          })
+        }
+      );
 
       if (!res.ok) throw new Error();
 
       const data = await res.json();
       setOutput(data.sql || "");
-    } catch {
-      setOutput("Failed to connect to backend or access denied");
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        setOutput("Failed to connect to backend or access denied");
+      }
     }
 
     setLoading(false);
@@ -191,15 +218,29 @@ function App() {
 
       <br /><br />
 
-      <button onClick={generateSQL} disabled={loading}>
-        {loading ? t.generating : t.generate}
-      </button>
-
-      {hasContent && (
-        <button onClick={clearAll} style={{ marginLeft: 10 }}>
-          {t.clear}
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={generateSQL} disabled={loading}>
+          {loading ? t.generating : t.generate}
         </button>
-      )}
+
+        {loading && (
+          <button onClick={stopGenerating}>
+            {t.stop}
+          </button>
+        )}
+
+        {output && (
+          <button onClick={copyOutput}>
+            {copied ? t.copied : t.copy}
+          </button>
+        )}
+
+        {hasContent && (
+          <button onClick={clearAll}>
+            {t.clear}
+          </button>
+        )}
+      </div>
 
       <hr />
 
