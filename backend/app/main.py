@@ -62,9 +62,13 @@ Database: {req.database}
 Rules:
 - Output ONLY valid SQL
 - No explanations, no markdown
-- Use ONLY tables and columns from the schema
+- Use ONLY tables and columns explicitly defined in the schema
+- DO NOT create new tables, columns, variables, parameters, or aliases that are not in the schema
+- DO NOT use CTEs (WITH clauses) unless the user explicitly asks for them
+- DO NOT reference variables inside LIMIT or OFFSET
+- If Nth, Rank, or Top queries are required, use subqueries or window functions
 - The schema may contain MANY CREATE TABLE statements
-- Use JOINs when required
+- Use JOINs only when required
 - Single SQL statement unless user explicitly asks otherwise
 - {mode_rule}
 
