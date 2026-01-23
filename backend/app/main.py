@@ -5,7 +5,12 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from app.dialects import DIALECT_RULES
+from app.validator import validate_sql
+
+# ----------------------------
 # Load environment variables
+# ----------------------------
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -53,6 +58,8 @@ def build_prompt(req: SQLRequest) -> str:
         else "You may generate INSERT, UPDATE, DELETE, CREATE, ALTER, or DROP statements."
     )
 
+    dialect_rule = DIALECT_RULES.get(req.database, "")
+
     return f"""
 You are an expert SQL engineer.
 
@@ -63,13 +70,14 @@ Rules:
 - Output ONLY valid SQL
 - No explanations, no markdown
 - Use ONLY tables and columns explicitly defined in the schema
-- DO NOT create new tables, columns, variables, parameters, or aliases that are not in the schema
-- DO NOT use CTEs (WITH clauses) unless the user explicitly asks for them
+- DO NOT create new tables, columns, variables, parameters, or aliases
+- DO NOT use CTEs (WITH clauses) unless explicitly requested
 - DO NOT reference variables inside LIMIT or OFFSET
-- If Nth, Rank, or Top queries are required, use subqueries or window functions
+- If Nth / Rank queries are required, use subqueries or window functions
 - The schema may contain MANY CREATE TABLE statements
 - Use JOINs only when required
-- Single SQL statement unless user explicitly asks otherwise
+- Single SQL statement unless explicitly requested
+- {dialect_rule}
 - {mode_rule}
 
 Schema (raw DDL):
@@ -77,7 +85,7 @@ Schema (raw DDL):
 
 User request:
 {req.criteria}
-"""
+""".strip()
 
 # ----------------------------
 # API endpoint
@@ -98,7 +106,13 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
         )
 
         sql = response.choices[0].message.content.strip()
+
+        # 🔐 Validate AI output
+        validate_sql(sql, req.sqlMode)
+
         return {"sql": sql}
 
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
