@@ -22,7 +22,7 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 class SQLRequest(BaseModel):
     language: str
     database: str
-    sqlMode: str   # read | write
+    sqlMode: str   # read | write | select | delete | update etc.
     schema: str
     criteria: str
 
@@ -46,10 +46,8 @@ def verify_api_key(x_api_key: str = Header(None)):
     if not SECRET_KEY or x_api_key != SECRET_KEY:
         raise HTTPException(status_code=403, detail="Access denied")
 
-
 # ----------------------------
-# Write-intent detector (CRITICAL)
-
+# Write-intent detector
 # ----------------------------
 WRITE_KEYWORDS = [
     "delete", "insert", "update", "drop",
@@ -60,17 +58,16 @@ def has_write_intent(text: str) -> bool:
     text = text.lower()
     return any(word in text for word in WRITE_KEYWORDS)
 
-
 # ----------------------------
 # Prompt builder
 # ----------------------------
-def build_prompt(req: SQLRequest) -> str:
+def build_prompt(req: SQLRequest, mode: str) -> str:
     lang = "English" if req.language == "en" else "Japanese"
     dialect_rule = DIALECT_RULES.get(req.database, "")
 
     mode_rule = (
         "Only generate SELECT statements."
-        if req.sqlMode == "read"
+        if mode == "read"
         else "You may generate INSERT, UPDATE, DELETE, CREATE, ALTER, or DROP statements."
     )
 
@@ -107,15 +104,23 @@ User request:
 def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
     verify_api_key(x_api_key)
 
-    # 🚫 HARD BLOCK (THIS FIXES YOUR ISSUE)
-    if req.sqlMode == "read" and has_write_intent(req.criteria):
+    # ✅ Normalize sqlMode
+    mode = req.sqlMode.lower()
+
+    if mode in ["select", "read"]:
+        mode = "read"
+    elif mode in ["insert", "update", "delete", "write", "ddl"]:
+        mode = "write"
+
+    # 🚫 HARD BLOCK: write intent in READ mode
+    if mode == "read" and has_write_intent(req.criteria):
         raise HTTPException(
             status_code=400,
             detail="Write operations are not allowed in READ mode"
         )
 
     try:
-        prompt = build_prompt(req)
+        prompt = build_prompt(req, mode)
 
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -127,13 +132,13 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
 
         sql = response.choices[0].message.content.strip()
 
-        # 🛡️ Validate SQL
-        validate_sql(sql, req.sqlMode)
+        # 🛡️ Validate SQL output
+        validate_sql(sql, mode)
 
         return {"sql": sql}
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="SQL generation failed")
