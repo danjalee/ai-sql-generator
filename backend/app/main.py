@@ -1,4 +1,5 @@
 import os
+import traceback
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -20,10 +21,10 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 # Request model
 # ----------------------------
 class SQLRequest(BaseModel):
-    language: str
-    database: str
-    sqlMode: str   # read | write | select | delete | update etc.
-    schema: str
+    language: str          # "en" | "ja"
+    database: str          # mysql | postgresql | sqlserver | sqlite
+    sqlMode: str           # read | write
+    schema_ddl: str        # renamed from "schema"
     criteria: str
 
 # ----------------------------
@@ -33,25 +34,28 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://ai-sql-generator-frontend.netlify.app"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://ai-sql-generator-frontend.netlify.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ----------------------------
-# Security
+# API key check
 # ----------------------------
 def verify_api_key(x_api_key: str = Header(None)):
     if not SECRET_KEY or x_api_key != SECRET_KEY:
         raise HTTPException(status_code=403, detail="Access denied")
 
 # ----------------------------
-# Write-intent detector
+# Write intent detector
 # ----------------------------
 WRITE_KEYWORDS = [
-    "delete", "insert", "update", "drop",
-    "truncate", "create", "alter"
+    "delete", "insert", "update",
+    "drop", "truncate", "create", "alter"
 ]
 
 def has_write_intent(text: str) -> bool:
@@ -61,13 +65,13 @@ def has_write_intent(text: str) -> bool:
 # ----------------------------
 # Prompt builder
 # ----------------------------
-def build_prompt(req: SQLRequest, mode: str) -> str:
+def build_prompt(req: SQLRequest) -> str:
     lang = "English" if req.language == "en" else "Japanese"
     dialect_rule = DIALECT_RULES.get(req.database, "")
 
     mode_rule = (
         "Only generate SELECT statements."
-        if mode == "read"
+        if req.sqlMode == "read"
         else "You may generate INSERT, UPDATE, DELETE, CREATE, ALTER, or DROP statements."
     )
 
@@ -76,22 +80,18 @@ You are an expert SQL engineer.
 
 Language: {lang}
 Database: {req.database}
-Dialect rules: {dialect_rule}
 
 STRICT RULES (must follow all):
 - Output ONLY valid SQL
 - No explanations, no markdown
 - Use ONLY tables and columns explicitly defined in the schema
-- DO NOT invent tables, columns, aliases, variables, or parameters
-- DO NOT use CTEs (WITH) unless explicitly requested
-- DO NOT reference variables in LIMIT or OFFSET
-- If Nth / Rank queries are required, use subqueries or window functions
-- Single SQL statement unless user explicitly asks otherwise
+- DO NOT invent tables, columns, aliases, or parameters
+- Single SQL statement only
 - {dialect_rule}
 - {mode_rule}
 
 Schema (raw DDL):
-{req.schema}
+{req.schema_ddl}
 
 User request:
 {req.criteria}
@@ -104,23 +104,15 @@ User request:
 def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
     verify_api_key(x_api_key)
 
-    # ✅ Normalize sqlMode
-    mode = req.sqlMode.lower()
-
-    if mode in ["select", "read"]:
-        mode = "read"
-    elif mode in ["insert", "update", "delete", "write", "ddl"]:
-        mode = "write"
-
-    # 🚫 HARD BLOCK: write intent in READ mode
-    if mode == "read" and has_write_intent(req.criteria):
+    # HARD BLOCK write intent in READ mode
+    if req.sqlMode == "read" and has_write_intent(req.criteria):
         raise HTTPException(
             status_code=400,
             detail="Write operations are not allowed in READ mode"
         )
 
     try:
-        prompt = build_prompt(req, mode)
+        prompt = build_prompt(req)
 
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -132,13 +124,13 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
 
         sql = response.choices[0].message.content.strip()
 
-        # 🛡️ Validate SQL output
-        validate_sql(sql, mode)
+        validate_sql(sql, req.sqlMode)
 
         return {"sql": sql}
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    except Exception:
-        raise HTTPException(status_code=500, detail="SQL generation failed")
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
