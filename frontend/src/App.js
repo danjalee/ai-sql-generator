@@ -1,96 +1,251 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
+import "./App.css";
+
+/* ===============================
+   Get secret key from URL
+================================ */
+function getSecretKey() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("key");
+}
+
+/* ===============================
+   UI text
+================================ */
+const TEXT = {
+  en: {
+    title: "AI SQL Generator",
+    appLanguage: "🌐 Language",
+    databaseType: "🗄️ Database Type",
+    sqlMode: "✍ SQL Mode",
+    readMode: "Read (SELECT)",
+    writeMode: "Write (INSERT / UPDATE / DELETE / DDL)",
+    schemaInput: "📄 Schema Input",
+    criteriaInput: "🧠 Criteria Input",
+    generate: "▶ Generate SQL",
+    generating: "Generating...",
+    clear: "🧹 Clear All",
+    output: "📤 SQL Output",
+    copy: "📋 Copy",
+    copied: "Copied!",
+    stop: "🛑 Stop",
+    schemaPlaceholder:
+`-- Paste CREATE TABLE statements here
+-- Multiple tables supported`,
+    criteriaPlaceholder: "Get all users",
+    requiredAlert: "Schema and criteria are required",
+    writeWarning: "⚠️ This SQL may modify or destroy data. Continue?"
+  },
+  ja: {
+    title: "AI SQL ジェネレーター",
+    appLanguage: "🌐 言語",
+    databaseType: "🗄️ データベース種類",
+    sqlMode: "✍ SQL モード",
+    readMode: "読取 (SELECT)",
+    writeMode: "書込 (INSERT / UPDATE / DELETE / DDL)",
+    schemaInput: "📄 スキーマ入力",
+    criteriaInput: "🧠 条件入力",
+    generate: "▶ SQL 生成",
+    generating: "生成中...",
+    clear: "🧹 全てクリア",
+    output: "📤 SQL 出力",
+    copy: "📋 コピー",
+    copied: "コピー済み",
+    stop: "🛑 停止",
+    schemaPlaceholder:
+`-- CREATE TABLE 文を貼り付けてください
+-- 複数テーブル対応`,
+    criteriaPlaceholder: "すべてのユーザーを取得",
+    requiredAlert: "スキーマと条件を入力してください",
+    writeWarning: "⚠️ このSQLはデータを変更・削除する可能性があります。続行しますか？"
+  }
+};
 
 function App() {
-  const [language, setLanguage] = useState("en");
-  const [database, setDatabase] = useState("mysql");
+  /* ===============================
+     Hooks (ALWAYS FIRST)
+  ================================ */
+  const apiKey = getSecretKey();
+
+  const [appLang, setAppLang] = useState("en");
+  const [dbType, setDbType] = useState("mysql");
   const [sqlMode, setSqlMode] = useState("read");
   const [schema, setSchema] = useState("");
   const [criteria, setCriteria] = useState("");
-  const [result, setResult] = useState("");
+  const [output, setOutput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const controllerRef = useRef(null);
+
+  const t = TEXT[appLang];
+
+  /* ===============================
+     Access control (AFTER hooks)
+  ================================ */
+  if (!apiKey) {
+    return (
+      <div style={{ padding: 40, textAlign: "center", color: "red" }}>
+        <h2>Access denied</h2>
+        <p>Invalid or missing access key.</p>
+      </div>
+    );
+  }
+
+  const hasContent =
+    schema.trim() !== "" ||
+    criteria.trim() !== "" ||
+    output.trim() !== "";
+
+  const clearAll = () => {
+    setSchema("");
+    setCriteria("");
+    setOutput("");
+  };
+
+  const stopGenerating = () => {
+    controllerRef.current?.abort();
+    setLoading(false);
+  };
+
+  const copyOutput = () => {
+    navigator.clipboard.writeText(output);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
 
   const generateSQL = async () => {
+    if (!schema.trim() || !criteria.trim()) {
+      alert(t.requiredAlert);
+      return;
+    }
+
+    if (sqlMode === "write" && !window.confirm(t.writeWarning)) return;
+
+    controllerRef.current = new AbortController();
     setLoading(true);
-    setError("");
-    setResult("");
+    setOutput("");
 
     try {
-      const response = await fetch(
-        "https://ai-sql-generator-backend.onrender.com/generate-sql",
+      const res = await fetch(
+        "https://ai-sql-generator-rh5f.onrender.com/generate-sql",
         {
           method: "POST",
+          signal: controllerRef.current.signal,
           headers: {
             "Content-Type": "application/json",
-            "x-api-key": process.env.REACT_APP_SECRET_KEY
+            "X-API-Key": apiKey
           },
           body: JSON.stringify({
-            language,
-            database,
+            language: appLang,
+            database: dbType,
             sqlMode,
-            schema_ddl: schema,
+            schema,
             criteria
           })
         }
       );
 
-      const data = await response.json();
+      if (!res.ok) throw new Error();
 
-      if (!response.ok) {
-        throw new Error(data.detail || "Failed to generate SQL");
-      }
-
-      setResult(data.sql);
+      const data = await res.json();
+      setOutput(data.sql || "");
     } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+      if (err.name !== "AbortError") {
+        setOutput("Failed to connect to backend or access denied");
+      }
     }
+
+    setLoading(false);
   };
 
+  /* ===============================
+     UI
+  ================================ */
   return (
-    <div style={{ padding: 20 }}>
-      <h2>AI SQL Generator</h2>
+    <div style={{ padding: 20, maxWidth: 900, margin: "auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between" }}>
+        <h2>{t.title}</h2>
 
-      <select value={language} onChange={e => setLanguage(e.target.value)}>
-        <option value="en">English</option>
-        <option value="ja">Japanese</option>
-      </select>
+        <div>
+          <label>{t.appLanguage}</label><br />
+          <select value={appLang} onChange={e => setAppLang(e.target.value)}>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+          </select>
+        </div>
+      </div>
 
-      <select value={database} onChange={e => setDatabase(e.target.value)}>
+      <hr />
+
+      <label>{t.databaseType}</label><br />
+      <select value={dbType} onChange={e => setDbType(e.target.value)}>
         <option value="mysql">MySQL</option>
         <option value="postgresql">PostgreSQL</option>
         <option value="sqlserver">SQL Server</option>
         <option value="sqlite">SQLite</option>
       </select>
 
+      <hr />
+
+      <label>{t.sqlMode}</label><br />
       <select value={sqlMode} onChange={e => setSqlMode(e.target.value)}>
-        <option value="read">SELECT (Read)</option>
-        <option value="write">Write</option>
+        <option value="read">{t.readMode}</option>
+        <option value="write">{t.writeMode}</option>
       </select>
 
+      <hr />
+
+      <label>{t.schemaInput}</label>
       <textarea
-        placeholder="Paste schema DDL here"
+        rows={12}
+        style={{ width: "100%" }}
         value={schema}
         onChange={e => setSchema(e.target.value)}
-        rows={6}
-        style={{ width: "100%" }}
+        placeholder={t.schemaPlaceholder}
       />
 
+      <hr />
+
+      <label>{t.criteriaInput}</label>
       <textarea
-        placeholder="Describe what you want"
+        rows={4}
+        style={{ width: "100%" }}
         value={criteria}
         onChange={e => setCriteria(e.target.value)}
-        rows={3}
-        style={{ width: "100%" }}
+        placeholder={t.criteriaPlaceholder}
       />
 
-      <button onClick={generateSQL} disabled={loading}>
-        {loading ? "Generating..." : "Generate SQL"}
-      </button>
+      <br /><br />
 
-      {error && <p style={{ color: "red" }}>{error}</p>}
-      {result && <pre>{result}</pre>}
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={generateSQL} disabled={loading}>
+          {loading ? t.generating : t.generate}
+        </button>
+
+        {loading && (
+          <button onClick={stopGenerating}>
+            {t.stop}
+          </button>
+        )}
+
+        {output && (
+          <button onClick={copyOutput}>
+            {copied ? t.copied : t.copy}
+          </button>
+        )}
+
+        {hasContent && (
+          <button onClick={clearAll}>
+            {t.clear}
+          </button>
+        )}
+      </div>
+
+      <hr />
+
+      <label>{t.output}</label>
+      <textarea rows={10} style={{ width: "100%" }} value={output} readOnly />
     </div>
   );
 }
