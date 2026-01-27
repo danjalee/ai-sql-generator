@@ -1,11 +1,10 @@
 @echo off
 echo ================================
-echo Starting SQL Agent Frontend
+echo Starting Frontend (React)
 echo ================================
 
-cd frontend
+cd /d "%~dp0frontend"
 
-REM Start React app
 npm start
 
 pause

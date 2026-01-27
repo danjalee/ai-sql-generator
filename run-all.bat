@@ -1,4 +1,20 @@
 @echo off
-start cmd /k run-backend.bat
-timeout /t 3
-start cmd /k run-frontend.bat
+echo =========================================
+echo Starting AI SQL Generator (ALL SERVICES)
+echo =========================================
+
+REM --- Start Ollama ---
+echo Starting Ollama...
+start "" cmd /k "ollama serve"
+
+REM --- Start Backend ---
+echo Starting Backend...
+start "" cmd /k "%~dp0run_backend.bat"
+
+REM --- Start Frontend ---
+echo Starting Frontend...
+start "" cmd /k "%~dp0run_frontend.bat"
+
+echo =========================================
+echo All services started!
+echo =========================================
