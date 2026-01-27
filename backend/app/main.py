@@ -104,8 +104,8 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
         response = requests.post(
             "http://localhost:11434/api/generate",
             json={
-                "model": "codellama:latest",
-                "prompt": prompt,
+                "model": "qwen2.5:3b",
+                "prompt": prompt + "\nReturn ONLY the SQL statement. No explanations.",
                 "stream": False
             },
             timeout=60
