@@ -9,11 +9,11 @@ start "" cmd /k "ollama serve"
 
 REM --- Start Backend ---
 echo Starting Backend...
-start "" cmd /k "%~dp0run_backend.bat"
+start "" cmd /k "%~dp0run-backend.bat"
 
 REM --- Start Frontend ---
 echo Starting Frontend...
-start "" cmd /k "%~dp0run_frontend.bat"
+start "" cmd /k "%~dp0run-frontend.bat"
 
 echo =========================================
 echo All services started!
