@@ -128,7 +128,7 @@ function App() {
 
     try {
       const res = await fetch(
-        "https://ai-sql-generator-rh5f.onrender.com/generate-sql",
+        "http://localhost:8000/generate-sql",
         {
           method: "POST",
           signal: controllerRef.current.signal,
