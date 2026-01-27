@@ -21,21 +21,26 @@ class SQLRequest(BaseModel):
 # ----------------------------
 app = FastAPI()
 
+# ✅ Allow local + deployed frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://ai-sql-generator-frontend.netlify.app"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://ai-sql-generator-frontend.netlify.app",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ----------------------------
-# Security (unchanged)
+# Security
 # ----------------------------
 SECRET_KEY = "my-super-secret-key-123"
 
 def verify_api_key(x_api_key: str = Header(None)):
-    if x_api_key != SECRET_KEY:
+    if not x_api_key or x_api_key != SECRET_KEY:
         raise HTTPException(status_code=403, detail="Access denied")
 
 # ----------------------------
@@ -79,7 +84,7 @@ Schema:
 
 User request:
 {req.criteria}
-"""
+""".strip()
 
 # ----------------------------
 # API endpoint
@@ -88,11 +93,7 @@ User request:
 def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
     verify_api_key(x_api_key)
 
-    mode = req.sqlMode.lower()
-    if mode in ["select", "read"]:
-        mode = "read"
-    else:
-        mode = "write"
+    mode = "read" if req.sqlMode.lower() in ["read", "select"] else "write"
 
     if mode == "read" and has_write_intent(req.criteria):
         raise HTTPException(
@@ -103,23 +104,29 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
     prompt = build_prompt(req, mode)
 
     try:
-        # 🔥 CALL LOCAL LLM (OLLAMA)
+        # ✅ LOCAL OLLAMA ONLY
         response = requests.post(
-            "http://localhost:11434/api/generate",
+            "http://127.0.0.1:11434/api/generate",
             json={
                 "model": "codellama",
                 "prompt": prompt,
                 "stream": False
             },
-            timeout=60
+            timeout=120
         )
+
+        if response.status_code != 200:
+            raise RuntimeError(response.text)
 
         result = response.json()
         sql = result.get("response", "").strip()
+
+        if not sql:
+            raise ValueError("Empty SQL generated")
 
         validate_sql(sql, mode)
 
         return {"sql": sql}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Ollama error: {e}")
