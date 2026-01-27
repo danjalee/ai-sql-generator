@@ -21,14 +21,9 @@ class SQLRequest(BaseModel):
 # ----------------------------
 app = FastAPI()
 
-# ✅ Allow local + deployed frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "https://ai-sql-generator-frontend.netlify.app",
-    ],
+    allow_origins=["*"],  # local dev
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -40,7 +35,7 @@ app.add_middleware(
 SECRET_KEY = "my-super-secret-key-123"
 
 def verify_api_key(x_api_key: str = Header(None)):
-    if not x_api_key or x_api_key != SECRET_KEY:
+    if x_api_key != SECRET_KEY:
         raise HTTPException(status_code=403, detail="Access denied")
 
 # ----------------------------
@@ -61,30 +56,31 @@ def build_prompt(req: SQLRequest, mode: str) -> str:
     dialect_rule = DIALECT_RULES.get(req.database, "")
 
     mode_rule = (
-        "Only generate SELECT statements."
+        "ONLY generate SELECT statements."
         if mode == "read"
         else "You may generate INSERT, UPDATE, DELETE, CREATE, ALTER, or DROP statements."
     )
 
     return f"""
-You are an expert SQL engineer.
-
-Database: {req.database}
-Dialect rules: {dialect_rule}
+You are an expert SQL generator.
 
 STRICT RULES:
 - Output ONLY SQL
-- No explanations
+- NO explanations
+- NO markdown
 - Use ONLY tables/columns from schema
 - Single SQL statement
 - {mode_rule}
+
+Database: {req.database}
+Dialect rules: {dialect_rule}
 
 Schema:
 {req.schema}
 
 User request:
 {req.criteria}
-""".strip()
+"""
 
 # ----------------------------
 # API endpoint
@@ -93,7 +89,8 @@ User request:
 def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
     verify_api_key(x_api_key)
 
-    mode = "read" if req.sqlMode.lower() in ["read", "select"] else "write"
+    mode = req.sqlMode.lower()
+    mode = "read" if mode in ["read", "select"] else "write"
 
     if mode == "read" and has_write_intent(req.criteria):
         raise HTTPException(
@@ -104,29 +101,31 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
     prompt = build_prompt(req, mode)
 
     try:
-        # ✅ LOCAL OLLAMA ONLY
         response = requests.post(
-            "http://127.0.0.1:11434/api/generate",
+            "http://localhost:11434/api/generate",
             json={
-                "model": "codellama",
+                "model": "codellama:latest",
                 "prompt": prompt,
                 "stream": False
             },
-            timeout=120
+            timeout=60
         )
 
-        if response.status_code != 200:
-            raise RuntimeError(response.text)
-
+        response.raise_for_status()
         result = response.json()
-        sql = result.get("response", "").strip()
 
-        if not sql:
-            raise ValueError("Empty SQL generated")
+        raw = result.get("response", "").strip()
+
+        # ✅ CLEAN OUTPUT (CRITICAL FIX)
+        if "```" in raw:
+            raw = raw.split("```")[1]
+
+        sql = raw.strip()
 
         validate_sql(sql, mode)
 
         return {"sql": sql}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ollama error: {e}")
+        print("ERROR:", e)
+        raise HTTPException(status_code=500, detail="SQL generation failed")
