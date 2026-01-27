@@ -127,15 +127,12 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
     try:
         prompt = build_prompt(req, mode)
 
-        response = client.chat.completions.create(
+        response = client.responses.create(
             model="gpt-4.1-mini",
-            messages=[
-                {"role": "system", "content": prompt}
-            ],
-            temperature=0
+            input=prompt,
         )
 
-        sql = response.choices[0].message.content.strip()
+        sql = response.output_text.strip()
 
         if not sql:
             raise HTTPException(
