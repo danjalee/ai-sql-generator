@@ -116,7 +116,7 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
 
         raw = result.get("response", "").strip()
 
-        # ✅ CLEAN OUTPUT (CRITICAL FIX)
+        # CLEAN OUTPUT (CRITICAL FIX)
         if "```" in raw:
             raw = raw.split("```")[1]
 
