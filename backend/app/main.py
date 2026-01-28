@@ -70,6 +70,9 @@ STRICT RULES:
 - NO markdown
 - Use ONLY tables/columns from schema
 - Single SQL statement
+- If a table alias is defined, ALWAYS use the alias
+- NEVER use the original table name after aliasing
+- Output valid executable SQL only
 - {mode_rule}
 
 Database: {req.database}
