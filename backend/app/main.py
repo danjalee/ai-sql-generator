@@ -12,7 +12,6 @@ from app.validator import validate_sql
 class SQLRequest(BaseModel):
     language: str
     database: str
-    sqlMode: str
     schema: str
     criteria: str
 
@@ -23,7 +22,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # local dev
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,41 +38,41 @@ def verify_api_key(x_api_key: str = Header(None)):
         raise HTTPException(status_code=403, detail="Access denied")
 
 # ----------------------------
-# Write intent detector
+# Intent detection
 # ----------------------------
 WRITE_KEYWORDS = [
-    "delete", "insert", "update", "drop",
-    "truncate", "create", "alter"
+    "delete", "remove", "insert", "add",
+    "update", "modify", "drop", "truncate",
+    "create", "alter", "clean", "erase"
 ]
 
-def has_write_intent(text: str) -> bool:
-    return any(word in text.lower() for word in WRITE_KEYWORDS)
+def detect_intent(text: str) -> str:
+    text = text.lower()
+    if any(word in text for word in WRITE_KEYWORDS):
+        return "write"
+    return "read"
 
 # ----------------------------
-# Prompt builder
+# Prompt builder (NO MODE BIAS)
 # ----------------------------
-def build_prompt(req: SQLRequest, mode: str) -> str:
+def build_prompt(req: SQLRequest) -> str:
     dialect_rule = DIALECT_RULES.get(req.database, "")
-
-    mode_rule = (
-        "ONLY generate SELECT statements."
-        if mode == "read"
-        else "You may generate INSERT, UPDATE, DELETE, CREATE, ALTER, or DROP statements."
-    )
 
     return f"""
 You are an expert SQL generator.
+
+Your responsibilities:
+- Determine whether the request requires READ or WRITE access
+- Generate exactly ONE valid SQL statement
 
 STRICT RULES:
 - Output ONLY SQL
 - NO explanations
 - NO markdown
-- Use ONLY tables/columns from schema
-- Single SQL statement
-- If a table alias is defined, ALWAYS use the alias
-- NEVER use the original table name after aliasing
-- Output valid executable SQL only
-- {mode_rule}
+- Use ONLY tables and columns from the schema
+- Prefer SELECT unless modification is clearly required
+- If destructive (DELETE / DROP), intent must be explicit
+- Output executable SQL only
 
 Database: {req.database}
 Dialect rules: {dialect_rule}
@@ -92,23 +91,15 @@ User request:
 def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
     verify_api_key(x_api_key)
 
-    mode = req.sqlMode.lower()
-    mode = "read" if mode in ["read", "select"] else "write"
-
-    if mode == "read" and has_write_intent(req.criteria):
-        raise HTTPException(
-            status_code=400,
-            detail="Write operations are not allowed in READ mode"
-        )
-
-    prompt = build_prompt(req, mode)
+    intent = detect_intent(req.criteria)
+    prompt = build_prompt(req)
 
     try:
         response = requests.post(
             "http://localhost:11434/api/generate",
             json={
                 "model": "qwen2.5:3b",
-                "prompt": prompt + "\nReturn ONLY the SQL statement. No explanations.",
+                "prompt": prompt + "\nReturn ONLY the SQL statement.",
                 "stream": False
             },
             timeout=60
@@ -119,16 +110,30 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
 
         raw = result.get("response", "").strip()
 
-        # CLEAN OUTPUT (CRITICAL FIX)
+        # Clean code fences if any
         if "```" in raw:
-            raw = raw.split("```")[1]
+            raw = raw.split("```")[1].strip()
 
-        sql = raw.strip()
+        sql = raw.strip().rstrip(";")
 
-        validate_sql(sql, mode)
+        # ----------------------------
+        # Safety enforcement
+        # ----------------------------
+        sql_lower = sql.lower()
+
+        if sql_lower.startswith(("delete", "update", "insert", "drop", "alter", "truncate")):
+            if intent != "write":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Write operation detected but intent is not explicit"
+                )
+
+        validate_sql(sql)
 
         return {"sql": sql}
 
+    except HTTPException:
+        raise
     except Exception as e:
         print("ERROR:", e)
         raise HTTPException(status_code=500, detail="SQL generation failed")

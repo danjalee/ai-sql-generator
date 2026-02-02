@@ -1,25 +1,16 @@
 import React, { useState, useRef } from "react";
 import "./App.css";
 
-/* ===============================
-   Get secret key from URL
-================================ */
 function getSecretKey() {
   const params = new URLSearchParams(window.location.search);
   return params.get("key");
 }
 
-/* ===============================
-   UI text
-================================ */
 const TEXT = {
   en: {
     title: "AI SQL Generator",
     appLanguage: "🌐 Language",
     databaseType: "🗄️ Database Type",
-    sqlMode: "✍ SQL Mode",
-    readMode: "Read (SELECT)",
-    writeMode: "Write (INSERT / UPDATE / DELETE / DDL)",
     schemaInput: "📄 Schema Input",
     criteriaInput: "🧠 Criteria Input",
     generate: "▶ Generate SQL",
@@ -32,17 +23,13 @@ const TEXT = {
     schemaPlaceholder:
 `-- Paste CREATE TABLE statements here
 -- Multiple tables supported`,
-    criteriaPlaceholder: "Get all users",
-    requiredAlert: "Schema and criteria are required",
-    writeWarning: "⚠️ This SQL may modify or destroy data. Continue?"
+    criteriaPlaceholder: "Describe what you want to do",
+    requiredAlert: "Schema and criteria are required"
   },
   ja: {
     title: "AI SQL ジェネレーター",
     appLanguage: "🌐 言語",
     databaseType: "🗄️ データベース種類",
-    sqlMode: "✍ SQL モード",
-    readMode: "読取 (SELECT)",
-    writeMode: "書込 (INSERT / UPDATE / DELETE / DDL)",
     schemaInput: "📄 スキーマ入力",
     criteriaInput: "🧠 条件入力",
     generate: "▶ SQL 生成",
@@ -55,21 +42,15 @@ const TEXT = {
     schemaPlaceholder:
 `-- CREATE TABLE 文を貼り付けてください
 -- 複数テーブル対応`,
-    criteriaPlaceholder: "すべてのユーザーを取得",
-    requiredAlert: "スキーマと条件を入力してください",
-    writeWarning: "⚠️ このSQLはデータを変更・削除する可能性があります。続行しますか？"
+    criteriaPlaceholder: "やりたいことを自然言語で入力",
+    requiredAlert: "スキーマと条件を入力してください"
   }
 };
 
 function App() {
-  /* ===============================
-     Hooks (ALWAYS FIRST)
-  ================================ */
   const apiKey = getSecretKey();
-
   const [appLang, setAppLang] = useState("en");
   const [dbType, setDbType] = useState("mysql");
-  const [sqlMode, setSqlMode] = useState("read");
   const [schema, setSchema] = useState("");
   const [criteria, setCriteria] = useState("");
   const [output, setOutput] = useState("");
@@ -77,12 +58,8 @@ function App() {
   const [copied, setCopied] = useState(false);
 
   const controllerRef = useRef(null);
-
   const t = TEXT[appLang];
 
-  /* ===============================
-     Access control (AFTER hooks)
-  ================================ */
   if (!apiKey) {
     return (
       <div style={{ padding: 40, textAlign: "center", color: "red" }}>
@@ -91,11 +68,6 @@ function App() {
       </div>
     );
   }
-
-  const hasContent =
-    schema.trim() !== "" ||
-    criteria.trim() !== "" ||
-    output.trim() !== "";
 
   const clearAll = () => {
     setSchema("");
@@ -120,61 +92,47 @@ function App() {
       return;
     }
 
-    if (sqlMode === "write" && !window.confirm(t.writeWarning)) return;
-
     controllerRef.current = new AbortController();
     setLoading(true);
     setOutput("");
 
     try {
-      const res = await fetch(
-        "http://localhost:8000/generate-sql",
-        {
-          method: "POST",
-          signal: controllerRef.current.signal,
-          headers: {
-            "Content-Type": "application/json",
-            "X-API-Key": apiKey
-          },
-          body: JSON.stringify({
-            language: appLang,
-            database: dbType,
-            sqlMode,
-            schema,
-            criteria
-          })
-        }
-      );
+      const res = await fetch("http://localhost:8000/generate-sql", {
+        method: "POST",
+        signal: controllerRef.current.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": apiKey
+        },
+        body: JSON.stringify({
+          language: appLang,
+          database: dbType,
+          schema,
+          criteria
+        })
+      });
 
       if (!res.ok) throw new Error();
-
       const data = await res.json();
       setOutput(data.sql || "");
     } catch (err) {
       if (err.name !== "AbortError") {
-        setOutput("Failed to connect to backend or access denied");
+        setOutput("Failed to generate SQL");
       }
     }
 
     setLoading(false);
   };
 
-  /* ===============================
-     UI
-  ================================ */
   return (
     <div style={{ padding: 20, maxWidth: 900, margin: "auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <h2>{t.title}</h2>
+      <h2>{t.title}</h2>
 
-        <div>
-          <label>{t.appLanguage}</label><br />
-          <select value={appLang} onChange={e => setAppLang(e.target.value)}>
-            <option value="en">English</option>
-            <option value="ja">日本語</option>
-          </select>
-        </div>
-      </div>
+      <label>{t.appLanguage}</label><br />
+      <select value={appLang} onChange={e => setAppLang(e.target.value)}>
+        <option value="en">English</option>
+        <option value="ja">日本語</option>
+      </select>
 
       <hr />
 
@@ -188,18 +146,8 @@ function App() {
 
       <hr />
 
-      <label>{t.sqlMode}</label><br />
-      <select value={sqlMode} onChange={e => setSqlMode(e.target.value)}>
-        <option value="read">{t.readMode}</option>
-        <option value="write">{t.writeMode}</option>
-      </select>
-
-      <hr />
-
       <label>{t.schemaInput}</label>
-      <textarea
-        rows={12}
-        style={{ width: "100%" }}
+      <textarea rows={12} style={{ width: "100%" }}
         value={schema}
         onChange={e => setSchema(e.target.value)}
         placeholder={t.schemaPlaceholder}
@@ -208,9 +156,7 @@ function App() {
       <hr />
 
       <label>{t.criteriaInput}</label>
-      <textarea
-        rows={4}
-        style={{ width: "100%" }}
+      <textarea rows={4} style={{ width: "100%" }}
         value={criteria}
         onChange={e => setCriteria(e.target.value)}
         placeholder={t.criteriaPlaceholder}
@@ -218,29 +164,13 @@ function App() {
 
       <br /><br />
 
-      <div style={{ display: "flex", gap: 10 }}>
-        <button onClick={generateSQL} disabled={loading}>
-          {loading ? t.generating : t.generate}
-        </button>
+      <button onClick={generateSQL} disabled={loading}>
+        {loading ? t.generating : t.generate}
+      </button>
 
-        {loading && (
-          <button onClick={stopGenerating}>
-            {t.stop}
-          </button>
-        )}
-
-        {output && (
-          <button onClick={copyOutput}>
-            {copied ? t.copied : t.copy}
-          </button>
-        )}
-
-        {hasContent && (
-          <button onClick={clearAll}>
-            {t.clear}
-          </button>
-        )}
-      </div>
+      {loading && <button onClick={stopGenerating}>{t.stop}</button>}
+      {output && <button onClick={copyOutput}>{copied ? t.copied : t.copy}</button>}
+      {(schema || criteria || output) && <button onClick={clearAll}>{t.clear}</button>}
 
       <hr />
 
