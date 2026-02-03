@@ -43,7 +43,7 @@ def verify_api_key(x_api_key: str = Header(None)):
 WRITE_KEYWORDS = [
     "delete", "remove", "insert", "add",
     "update", "modify", "drop", "truncate",
-    "create", "alter", "clean", "erase"
+    "create", "alter", "erase"
 ]
 
 def detect_intent(text: str) -> str:
@@ -53,26 +53,64 @@ def detect_intent(text: str) -> str:
     return "read"
 
 # ----------------------------
-# Prompt builder (NO USER MODE)
+# Zero-row requirement detection
 # ----------------------------
-def build_prompt(req: SQLRequest) -> str:
+ZERO_ROW_HINTS = [
+    "each", "every", "all",
+    "even if", "including",
+    "0", "zero", "no exam",
+    "no record"
+]
+
+def requires_zero_rows(text: str) -> bool:
+    t = text.lower()
+    return any(h in t for h in ZERO_ROW_HINTS)
+
+# ----------------------------
+# JOIN analysis
+# ----------------------------
+def has_inner_join(sql: str) -> bool:
+    s = sql.lower()
+    return (
+        " join " in s
+        and "left join" not in s
+        and "right join" not in s
+        and "cross join" not in s
+    )
+
+# ----------------------------
+# Prompt builder
+# ----------------------------
+def build_prompt(req: SQLRequest, force_join_fix: bool = False) -> str:
     dialect_rule = DIALECT_RULES.get(req.database, "")
+
+    join_fix_rule = ""
+    if force_join_fix:
+        join_fix_rule = """
+CRITICAL JOIN RULE:
+- The result MUST include rows with zero matches
+- NEVER use INNER JOIN for counting
+- Use CROSS JOIN between base entities
+- Use LEFT JOIN for fact tables
+- Use COALESCE(COUNT(...), 0)
+"""
 
     return f"""
 You are an expert SQL generator.
 
 Your responsibilities:
-- Decide whether the request is READ or WRITE
-- Generate exactly ONE valid SQL statement
+- Decide READ or WRITE automatically
+- Generate exactly ONE executable SQL statement
 
 STRICT RULES:
 - Output ONLY SQL
-- NO explanations
 - NO markdown
-- Use ONLY tables and columns from the schema
-- Prefer SELECT unless modification is explicitly requested
-- Use OR / AND for logical conditions when possible
-- Output executable SQL only
+- NO explanations
+- Use ONLY schema tables/columns
+- Prefer SELECT unless modification is explicit
+- Destructive queries require clear intent
+
+{join_fix_rule}
 
 Database: {req.database}
 Dialect rules: {dialect_rule}
@@ -82,7 +120,7 @@ Schema:
 
 User request:
 {req.criteria}
-""".strip()
+"""
 
 # ----------------------------
 # API endpoint
@@ -92,9 +130,9 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
     verify_api_key(x_api_key)
 
     intent = detect_intent(req.criteria)
-    prompt = build_prompt(req)
+    zero_required = requires_zero_rows(req.criteria)
 
-    try:
+    def call_llm(prompt: str) -> str:
         response = requests.post(
             "http://localhost:11434/api/generate",
             json={
@@ -104,34 +142,30 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
             },
             timeout=60
         )
-
         response.raise_for_status()
-        result = response.json()
-
-        raw = result.get("response", "").strip()
-
-        # Remove code fences if any
+        raw = response.json().get("response", "").strip()
         if "```" in raw:
             raw = raw.split("```")[1].strip()
+        return raw.rstrip(";")
 
-        sql = raw.strip().rstrip(";")
+    try:
+        # First attempt
+        sql = call_llm(build_prompt(req))
+
+        # JOIN repair loop (ONE retry is enough)
+        if zero_required and has_inner_join(sql):
+            sql = call_llm(build_prompt(req, force_join_fix=True))
+
+        # Safety enforcement
         sql_lower = sql.lower()
-
-        # ----------------------------
-        # Enforce intent
-        # ----------------------------
-        if sql_lower.startswith((
-            "insert", "update", "delete",
-            "create", "alter", "drop", "truncate"
-        )):
+        if sql_lower.startswith(("delete", "update", "insert", "drop", "alter", "truncate")):
             if intent != "write":
                 raise HTTPException(
                     status_code=400,
-                    detail="Write operation detected but intent is not explicit"
+                    detail="Write operation detected without explicit intent"
                 )
 
         validate_sql(sql)
-
         return {"sql": sql}
 
     except HTTPException:
