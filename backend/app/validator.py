@@ -1,44 +1,33 @@
 import re
 
+ALLOWED_START = ("select",)
+
+DISALLOWED_KEYWORDS = [
+    "delete",
+    "update",
+    "insert",
+    "drop",
+    "truncate",
+    "alter"
+]
+
 def validate_sql(sql: str):
     s = sql.strip().lower()
 
-    # ----------------------------
-    # Basic sanity
-    # ----------------------------
-    if not s:
-        raise ValueError("Empty SQL")
+    # Must start with SELECT
+    if not s.startswith(ALLOWED_START):
+        raise Exception("Unsupported SQL statement")
 
-    # Remove wrapping parentheses
-    while s.startswith("(") and s.endswith(")"):
-        s = s[1:-1].strip()
+    # Block destructive statements
+    for kw in DISALLOWED_KEYWORDS:
+        if re.search(rf"\b{kw}\b", s):
+            raise Exception("Destructive SQL is not allowed")
 
-    # Extract first keyword (robust)
-    match = re.match(r"^(with|select|insert|update|delete|create|alter|drop|truncate)\b", s)
-    if not match:
-        raise ValueError("Unsupported SQL statement")
+    # Allow JOIN variants including CROSS JOIN
+    # (NO restriction needed here anymore)
 
-    stmt_type = match.group(1)
+    # Basic sanity check
+    if ";" in s[:-1]:
+        raise Exception("Multiple SQL statements detected")
 
-    # ----------------------------
-    # Injection / comment blocking
-    # ----------------------------
-    forbidden = [";--", "/*", "*/"]
-    for f in forbidden:
-        if f in s:
-            raise ValueError("Invalid or unsafe SQL detected")
-
-    # ----------------------------
-    # Hard safety blocks
-    # ----------------------------
-    if stmt_type in ("drop", "truncate"):
-        raise ValueError("DROP / TRUNCATE operations are blocked")
-
-    # ----------------------------
-    # Soft safety rules
-    # ----------------------------
-    if stmt_type == "delete" and "where" not in s:
-        raise ValueError("DELETE without WHERE is not allowed")
-
-    if stmt_type == "update" and "where" not in s:
-        raise ValueError("UPDATE without WHERE is not allowed")
+    return True
