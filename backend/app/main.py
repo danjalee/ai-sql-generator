@@ -43,12 +43,12 @@ def verify_api_key(x_api_key: str = Header(None)):
 WRITE_KEYWORDS = [
     "delete", "remove", "insert", "add",
     "update", "modify", "drop", "truncate",
-    "create", "alter", "erase"
+    "create", "alter", "erase", "clean"
 ]
 
 def detect_intent(text: str) -> str:
-    text = text.lower()
-    if any(word in text for word in WRITE_KEYWORDS):
+    t = text.lower()
+    if any(word in t for word in WRITE_KEYWORDS):
         return "write"
     return "read"
 
@@ -58,8 +58,8 @@ def detect_intent(text: str) -> str:
 ZERO_ROW_HINTS = [
     "each", "every", "all",
     "even if", "including",
-    "0", "zero", "no exam",
-    "no record"
+    "zero", "0", "no exam",
+    "no record", "missing"
 ]
 
 def requires_zero_rows(text: str) -> bool:
@@ -79,7 +79,7 @@ def has_inner_join(sql: str) -> bool:
     )
 
 # ----------------------------
-# Prompt builder
+# Prompt builder (NO mode bias)
 # ----------------------------
 def build_prompt(req: SQLRequest, force_join_fix: bool = False) -> str:
     dialect_rule = DIALECT_RULES.get(req.database, "")
@@ -87,27 +87,27 @@ def build_prompt(req: SQLRequest, force_join_fix: bool = False) -> str:
     join_fix_rule = ""
     if force_join_fix:
         join_fix_rule = """
-CRITICAL JOIN RULE:
+CRITICAL JOIN RULE (MANDATORY):
 - The result MUST include rows with zero matches
 - NEVER use INNER JOIN for counting
-- Use CROSS JOIN between base entities
+- Use CROSS JOIN to enumerate all combinations
 - Use LEFT JOIN for fact tables
-- Use COALESCE(COUNT(...), 0)
+- Use COUNT(column) (NULL-safe)
 """
 
     return f"""
 You are an expert SQL generator.
 
 Your responsibilities:
-- Decide READ or WRITE automatically
+- Automatically determine READ vs WRITE intent
 - Generate exactly ONE executable SQL statement
 
 STRICT RULES:
 - Output ONLY SQL
-- NO markdown
 - NO explanations
-- Use ONLY schema tables/columns
-- Prefer SELECT unless modification is explicit
+- NO markdown
+- Use ONLY tables and columns from the schema
+- Prefer SELECT unless modification is explicitly requested
 - Destructive queries require clear intent
 
 {join_fix_rule}
@@ -143,29 +143,38 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
             timeout=60
         )
         response.raise_for_status()
+
         raw = response.json().get("response", "").strip()
+
+        # Strip code fences if any
         if "```" in raw:
             raw = raw.split("```")[1].strip()
+
         return raw.rstrip(";")
 
     try:
-        # First attempt
+        # First generation
         sql = call_llm(build_prompt(req))
 
-        # JOIN repair loop (ONE retry is enough)
+        # JOIN repair (only once, only if required)
         if zero_required and has_inner_join(sql):
             sql = call_llm(build_prompt(req, force_join_fix=True))
 
         # Safety enforcement
         sql_lower = sql.lower()
-        if sql_lower.startswith(("delete", "update", "insert", "drop", "alter", "truncate")):
+        if sql_lower.startswith((
+            "delete", "update", "insert",
+            "drop", "alter", "truncate"
+        )):
             if intent != "write":
                 raise HTTPException(
                     status_code=400,
                     detail="Write operation detected without explicit intent"
                 )
 
+        # Final validation
         validate_sql(sql)
+
         return {"sql": sql}
 
     except HTTPException:
