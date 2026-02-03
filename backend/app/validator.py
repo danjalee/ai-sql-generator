@@ -1,23 +1,24 @@
+import re
+
 def validate_sql(sql: str):
-    s = sql.lower().strip()
+    s = sql.strip().lower()
 
     # ----------------------------
-    # Basic SQL sanity
+    # Basic sanity
     # ----------------------------
     if not s:
         raise ValueError("Empty SQL")
 
-    if not s.startswith((
-        "select",
-        "insert",
-        "update",
-        "delete",
-        "create",
-        "alter",
-        "drop",
-        "truncate"
-    )):
+    # Remove wrapping parentheses
+    while s.startswith("(") and s.endswith(")"):
+        s = s[1:-1].strip()
+
+    # Extract first keyword (robust)
+    match = re.match(r"^(with|select|insert|update|delete|create|alter|drop|truncate)\b", s)
+    if not match:
         raise ValueError("Unsupported SQL statement")
+
+    stmt_type = match.group(1)
 
     # ----------------------------
     # Injection / comment blocking
@@ -30,14 +31,14 @@ def validate_sql(sql: str):
     # ----------------------------
     # Hard safety blocks
     # ----------------------------
-    if s.startswith("drop") or s.startswith("truncate"):
+    if stmt_type in ("drop", "truncate"):
         raise ValueError("DROP / TRUNCATE operations are blocked")
 
     # ----------------------------
-    # Soft warnings (future extension)
+    # Soft safety rules
     # ----------------------------
-    if s.startswith("delete") and "where" not in s:
+    if stmt_type == "delete" and "where" not in s:
         raise ValueError("DELETE without WHERE is not allowed")
 
-    if s.startswith("update") and "where" not in s:
+    if stmt_type == "update" and "where" not in s:
         raise ValueError("UPDATE without WHERE is not allowed")

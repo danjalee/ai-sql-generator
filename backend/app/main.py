@@ -38,7 +38,7 @@ def verify_api_key(x_api_key: str = Header(None)):
         raise HTTPException(status_code=403, detail="Access denied")
 
 # ----------------------------
-# Intent detection
+# Intent detection (AI responsibility)
 # ----------------------------
 WRITE_KEYWORDS = [
     "delete", "remove", "insert", "add",
@@ -53,7 +53,7 @@ def detect_intent(text: str) -> str:
     return "read"
 
 # ----------------------------
-# Prompt builder (NO MODE BIAS)
+# Prompt builder (NO USER MODE)
 # ----------------------------
 def build_prompt(req: SQLRequest) -> str:
     dialect_rule = DIALECT_RULES.get(req.database, "")
@@ -62,7 +62,7 @@ def build_prompt(req: SQLRequest) -> str:
 You are an expert SQL generator.
 
 Your responsibilities:
-- Determine whether the request requires READ or WRITE access
+- Decide whether the request is READ or WRITE
 - Generate exactly ONE valid SQL statement
 
 STRICT RULES:
@@ -70,8 +70,8 @@ STRICT RULES:
 - NO explanations
 - NO markdown
 - Use ONLY tables and columns from the schema
-- Prefer SELECT unless modification is clearly required
-- If destructive (DELETE / DROP), intent must be explicit
+- Prefer SELECT unless modification is explicitly requested
+- Use OR / AND for logical conditions when possible
 - Output executable SQL only
 
 Database: {req.database}
@@ -82,7 +82,7 @@ Schema:
 
 User request:
 {req.criteria}
-"""
+""".strip()
 
 # ----------------------------
 # API endpoint
@@ -110,18 +110,20 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
 
         raw = result.get("response", "").strip()
 
-        # Clean code fences if any
+        # Remove code fences if any
         if "```" in raw:
             raw = raw.split("```")[1].strip()
 
         sql = raw.strip().rstrip(";")
-
-        # ----------------------------
-        # Safety enforcement
-        # ----------------------------
         sql_lower = sql.lower()
 
-        if sql_lower.startswith(("delete", "update", "insert", "drop", "alter", "truncate")):
+        # ----------------------------
+        # Enforce intent
+        # ----------------------------
+        if sql_lower.startswith((
+            "insert", "update", "delete",
+            "create", "alter", "drop", "truncate"
+        )):
             if intent != "write":
                 raise HTTPException(
                     status_code=400,
