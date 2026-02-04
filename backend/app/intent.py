@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class Pattern(str, Enum):
     TOP_PER_GROUP = "TOP_PER_GROUP"
     ANTI_JOIN = "ANTI_JOIN"
@@ -9,19 +10,37 @@ class Pattern(str, Enum):
 
 
 def detect_patterns(criteria: str) -> set[Pattern]:
-    c = criteria.lower()
-    patterns = set()
+    """
+    Rule-based SQL pattern detection.
+    This is deterministic and safe (no LLM here).
+    """
 
-    if any(w in c for w in ["highest", "maximum", "max", "top", "largest"]):
+    c = criteria.lower()
+    patterns: set[Pattern] = set()
+
+    # ---------- TOP PER GROUP ----------
+    if any(w in c for w in [
+        "highest", "maximum", "max", "top",
+        "largest", "most", "best"
+    ]):
         patterns.add(Pattern.TOP_PER_GROUP)
 
-    if any(w in c for w in ["never", "not ordered", "no record", "missing"]):
+    # ---------- ANTI JOIN / ZERO ROW ----------
+    if any(w in c for w in [
+        "never", "not ordered", "no record",
+        "missing", "without", "did not"
+    ]):
         patterns.add(Pattern.ANTI_JOIN)
         patterns.add(Pattern.ZERO_ROW)
 
-    if "duplicate" in c:
+    # ---------- DEDUPLICATION ----------
+    if any(w in c for w in [
+        "duplicate", "duplicates", "unique",
+        "remove duplicate"
+    ]):
         patterns.add(Pattern.DEDUP)
 
+    # ---------- FALLBACK ----------
     if not patterns:
         patterns.add(Pattern.SIMPLE_SELECT)
 
