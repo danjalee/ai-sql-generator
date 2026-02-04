@@ -28,7 +28,9 @@ STRATEGY_RULES = {
 """,
 
     Pattern.SIMPLE_SELECT: """
-- Simple SELECT query
-- Avoid unnecessary JOINs
+- DO NOT use WITH
+- DO NOT use JOIN unless necessary
+- Prefer single SELECT
+- No LIMIT unless explicitly requested
 """
 }

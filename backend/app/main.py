@@ -9,18 +9,19 @@ from app.validator import validate_sql
 from app.dialects import DIALECT_RULES
 from app.executor import execute_sql
 
-# ----------------------------
+# ============================
 # Request model
-# ----------------------------
+# ============================
 class SQLRequest(BaseModel):
     language: str
     database: str
     schema: str
     criteria: str
 
-# ----------------------------
+
+# ============================
 # App
-# ----------------------------
+# ============================
 app = FastAPI()
 
 app.add_middleware(
@@ -30,58 +31,77 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ============================
+# Security
+# ============================
 SECRET_KEY = "my-super-secret-key-123"
 
 def verify_api_key(x_api_key: str = Header(None)):
     if x_api_key != SECRET_KEY:
         raise HTTPException(status_code=403, detail="Access denied")
 
-# ----------------------------
-# LLM
-# ----------------------------
+
+# ============================
+# LLM call (FAST + deterministic)
+# ============================
 def call_llm(prompt: str) -> str:
-    res = requests.post(
+    response = requests.post(
         "http://localhost:11434/api/generate",
         json={
             "model": "qwen2.5:3b",
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": 0, "top_p": 0.1}
+            "options": {
+                "temperature": 0,
+                "top_p": 0.05,
+                "num_predict": 300   # critical: stops rambling
+            }
         },
-        timeout=60
+        timeout=40
     )
-    res.raise_for_status()
-    raw = res.json().get("response", "").strip()
+    response.raise_for_status()
+
+    raw = response.json().get("response", "").strip()
+
     if "```" in raw:
         raw = raw.split("```")[1].strip()
+
     return raw.rstrip(";")
 
-# ----------------------------
-# Prompt
-# ----------------------------
+# ============================
+# Prompt builder (ANTI-WITH)
+# ============================
 def build_prompt(req: SQLRequest) -> str:
     patterns = detect_patterns(req.criteria)
 
     strategy_text = "\n".join(
-        STRATEGY_RULES[p] for p in patterns
+        STRATEGY_RULES[p] for p in patterns if p in STRATEGY_RULES
     )
 
-    return f"""
-You are a LeetCode SQL expert.
+    dialect_rule = DIALECT_RULES.get(req.database, "")
 
-STRICT RULES:
+    no_cte = Pattern.SIMPLE_SELECT in patterns
+
+    return f"""
+You are an expert SQL solver.
+
+ABSOLUTE RULES:
 - Output ONE SQL statement
-- SQL ONLY
-- MUST start with SELECT or WITH
-- DO NOT invent columns
-- Use ONLY schema tables/columns
-- Follow ALL strategy rules exactly
+- SQL ONLY (no explanation)
+- MUST start with SELECT
+- DO NOT use WITH unless absolutely required
+- DO NOT use LIMIT unless explicitly requested
+- DO NOT use CREATE, INSERT, UPDATE, DELETE
+- Use ONLY tables and columns from schema
+- Prefer simplest possible query
+
+{"DO NOT use JOIN unless required." if no_cte else ""}
 
 STRATEGY RULES:
 {strategy_text}
 
 DIALECT:
-{DIALECT_RULES.get(req.database, "")}
+{dialect_rule}
 
 SCHEMA:
 {req.schema}
@@ -90,48 +110,40 @@ QUESTION:
 {req.criteria}
 """
 
-# ----------------------------
+# ============================
 # Endpoint
-# ----------------------------
+# ============================
 @app.post("/generate-sql")
 def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
     verify_api_key(x_api_key)
 
     try:
+        # Generate SQL (single shot)
         sql = call_llm(build_prompt(req))
 
-        # Fast path
-        try:
-            validate_sql(sql)
-            return {"sql": sql}
-        except Exception:
-            pass
-
-        # Single repair attempt
-        repair_prompt = f"""
-The SQL below is WRONG.
-
-Fix it.
-
-STRICT:
-- SQL ONLY
-- ONE statement
-- MUST start with SELECT or WITH
-
-SCHEMA:
-{req.schema}
-
-QUESTION:
-{req.criteria}
-
-SQL:
-{sql}
-"""
-        sql = call_llm(repair_prompt)
+        # Hard validation
         validate_sql(sql)
+
+        # Execute once (no loops)
+        try:
+            result = execute_sql(req.schema, sql)
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Execution failed: {e}"
+            )
+
+        # Sanity check
+        if result["row_count"] == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Query returned zero rows (likely wrong logic)"
+            )
 
         return {"sql": sql}
 
+    except HTTPException:
+        raise
     except Exception as e:
         print("ERROR:", e)
         raise HTTPException(status_code=500, detail="SQL generation failed")
