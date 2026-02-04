@@ -7,7 +7,6 @@ from app.intent import detect_patterns, Pattern
 from app.strategy import STRATEGY_RULES
 from app.validator import validate_sql
 from app.dialects import DIALECT_RULES
-from app.executor import execute_sql
 
 # ============================
 # Request model
@@ -54,7 +53,7 @@ def call_llm(prompt: str) -> str:
             "options": {
                 "temperature": 0,
                 "top_p": 0.05,
-                "num_predict": 300   # critical: stops rambling
+                "num_predict": 250
             }
         },
         timeout=40
@@ -80,22 +79,22 @@ def build_prompt(req: SQLRequest) -> str:
 
     dialect_rule = DIALECT_RULES.get(req.database, "")
 
-    no_cte = Pattern.SIMPLE_SELECT in patterns
+    simple = Pattern.SIMPLE_SELECT in patterns
 
     return f"""
-You are an expert SQL solver.
+You are an expert SQL problem solver.
 
 ABSOLUTE RULES:
-- Output ONE SQL statement
-- SQL ONLY (no explanation)
+- Output ONE SQL statement only
+- SQL ONLY (no explanation, no markdown)
 - MUST start with SELECT
-- DO NOT use WITH unless absolutely required
+- DO NOT use WITH unless strictly necessary
 - DO NOT use LIMIT unless explicitly requested
 - DO NOT use CREATE, INSERT, UPDATE, DELETE
 - Use ONLY tables and columns from schema
-- Prefer simplest possible query
+- Prefer the SIMPLEST possible query
 
-{"DO NOT use JOIN unless required." if no_cte else ""}
+{"DO NOT use JOIN unless required." if simple else ""}
 
 STRATEGY RULES:
 {strategy_text}
@@ -118,28 +117,8 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
     verify_api_key(x_api_key)
 
     try:
-        # Generate SQL (single shot)
         sql = call_llm(build_prompt(req))
-
-        # Hard validation
         validate_sql(sql)
-
-        # Execute once (no loops)
-        try:
-            result = execute_sql(req.schema, sql)
-        except Exception as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Execution failed: {e}"
-            )
-
-        # Sanity check
-        if result["row_count"] == 0:
-            raise HTTPException(
-                status_code=400,
-                detail="Query returned zero rows (likely wrong logic)"
-            )
-
         return {"sql": sql}
 
     except HTTPException:

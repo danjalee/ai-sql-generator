@@ -1,10 +1,10 @@
 import re
 
-ALLOWED_START = ("select", "with")
+ALLOWED_START = ("select",)
 
 DISALLOWED = [
     "delete", "update", "insert",
-    "drop", "truncate", "alter"
+    "drop", "truncate", "alter", "create"
 ]
 
 def validate_sql(sql: str):

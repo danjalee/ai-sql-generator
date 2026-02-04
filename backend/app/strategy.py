@@ -1,13 +1,10 @@
 from app.intent import Pattern
 
 STRATEGY_RULES = {
-    Pattern.ZERO_ROW: """
-- MUST include rows with zero matches
-- Use CROSS JOIN to enumerate dimension tables
-- LEFT JOIN fact tables
-- NEVER use INNER JOIN
-- Use COUNT(column), NOT COUNT(*)
-- Use COALESCE(..., 0)
+    Pattern.TOP_PER_GROUP: """
+- Return ALL ties
+- Do NOT use LIMIT
+- Use subquery with MAX() OR window functions
 """,
 
     Pattern.ANTI_JOIN: """
@@ -15,22 +12,19 @@ STRATEGY_RULES = {
 - NEVER use NOT IN
 """,
 
-    Pattern.TOP_PER_GROUP: """
-- Return ALL ties
-- Do NOT use LIMIT
-- Use window functions (RANK / DENSE_RANK)
-- OR subquery with MAX() + JOIN
+    Pattern.ZERO_ROW: """
+- Include rows with zero matches
+- Use LEFT JOIN
+- Use COUNT(column), NOT COUNT(*)
 """,
 
     Pattern.DEDUP: """
-- Remove duplicates
-- Use GROUP BY or ROW_NUMBER()
+- Remove duplicates using GROUP BY or DISTINCT
 """,
 
     Pattern.SIMPLE_SELECT: """
-- DO NOT use WITH
-- DO NOT use JOIN unless necessary
-- Prefer single SELECT
-- No LIMIT unless explicitly requested
+- Single SELECT
+- No WITH
+- No unnecessary JOIN
 """
 }
