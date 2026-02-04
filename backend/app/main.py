@@ -1,10 +1,12 @@
-import requests
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app.dialects import DIALECT_RULES
+from app.intent import detect_patterns
+from app.strategy import STRATEGY_RULES
 from app.validator import validate_sql
+from app.verifier import call_llm, verify_and_fix
+from app.dialects import DIALECT_RULES
 
 # ----------------------------
 # Request model
@@ -16,21 +18,17 @@ class SQLRequest(BaseModel):
     criteria: str
 
 # ----------------------------
-# FastAPI app
+# App
 # ----------------------------
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ----------------------------
-# Security
-# ----------------------------
 SECRET_KEY = "my-super-secret-key-123"
 
 def verify_api_key(x_api_key: str = Header(None)):
@@ -38,147 +36,58 @@ def verify_api_key(x_api_key: str = Header(None)):
         raise HTTPException(status_code=403, detail="Access denied")
 
 # ----------------------------
-# Intent detection (AI responsibility)
+# Prompt builder
 # ----------------------------
-WRITE_KEYWORDS = [
-    "delete", "remove", "insert", "add",
-    "update", "modify", "drop", "truncate",
-    "create", "alter", "erase", "clean"
-]
+def build_prompt(req: SQLRequest) -> str:
+    patterns = detect_patterns(req.criteria)
 
-def detect_intent(text: str) -> str:
-    t = text.lower()
-    if any(word in t for word in WRITE_KEYWORDS):
-        return "write"
-    return "read"
-
-# ----------------------------
-# Zero-row requirement detection
-# ----------------------------
-ZERO_ROW_HINTS = [
-    "each", "every", "all",
-    "even if", "including",
-    "zero", "0", "no exam",
-    "no record", "missing"
-]
-
-def requires_zero_rows(text: str) -> bool:
-    t = text.lower()
-    return any(h in t for h in ZERO_ROW_HINTS)
-
-# ----------------------------
-# JOIN analysis
-# ----------------------------
-def has_inner_join(sql: str) -> bool:
-    s = sql.lower()
-    return (
-        " join " in s
-        and "left join" not in s
-        and "right join" not in s
-        and "cross join" not in s
+    strategy_text = "\n".join(
+        STRATEGY_RULES[p] for p in patterns if p in STRATEGY_RULES
     )
 
-# ----------------------------
-# Prompt builder (NO mode bias)
-# ----------------------------
-def build_prompt(req: SQLRequest, force_join_fix: bool = False) -> str:
     dialect_rule = DIALECT_RULES.get(req.database, "")
 
-    join_fix_rule = ""
-    if force_join_fix:
-        join_fix_rule = """
-CRITICAL JOIN RULE (MANDATORY):
-- The result MUST include rows with zero matches
-- NEVER use INNER JOIN for counting
-- Use CROSS JOIN to enumerate all combinations
-- Use LEFT JOIN for fact tables
-- Use COUNT(column) (NULL-safe)
-"""
-
     return f"""
-You are an expert SQL generator.
+You are a LeetCode SQL solver.
 
-Your responsibilities:
-- Automatically determine READ vs WRITE intent
-- Generate exactly ONE executable SQL statement
+MANDATORY:
+- ONE SQL statement
+- SQL ONLY
+- No explanation
+- Follow ALL rules
 
-STRICT RULES:
-- Output ONLY SQL
-- NO explanations
-- NO markdown
-- Use ONLY tables and columns from the schema
-- Prefer SELECT unless modification is explicitly requested
-- Destructive queries require clear intent
+STRATEGY RULES:
+{strategy_text}
 
-{join_fix_rule}
-
-Database: {req.database}
-Dialect rules: {dialect_rule}
+Dialect:
+{dialect_rule}
 
 Schema:
 {req.schema}
 
-User request:
+Question:
 {req.criteria}
 """
 
 # ----------------------------
-# API endpoint
+# Endpoint
 # ----------------------------
 @app.post("/generate-sql")
 def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
     verify_api_key(x_api_key)
 
-    intent = detect_intent(req.criteria)
-    zero_required = requires_zero_rows(req.criteria)
-
-    def call_llm(prompt: str) -> str:
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-            json={
-                "model": "qwen2.5:3b",
-                "prompt": prompt + "\nReturn ONLY the SQL statement.",
-                "stream": False
-            },
-            timeout=60
-        )
-        response.raise_for_status()
-
-        raw = response.json().get("response", "").strip()
-
-        # Strip code fences if any
-        if "```" in raw:
-            raw = raw.split("```")[1].strip()
-
-        return raw.rstrip(";")
-
     try:
-        # First generation
+        # 1️⃣ Generate
         sql = call_llm(build_prompt(req))
 
-        # JOIN repair (only once, only if required)
-        if zero_required and has_inner_join(sql):
-            sql = call_llm(build_prompt(req, force_join_fix=True))
+        # 2️⃣ Self-verify & repair
+        sql = verify_and_fix(sql, req.schema, req.criteria)
 
-        # Safety enforcement
-        sql_lower = sql.lower()
-        if sql_lower.startswith((
-            "delete", "update", "insert",
-            "drop", "alter", "truncate"
-        )):
-            if intent != "write":
-                raise HTTPException(
-                    status_code=400,
-                    detail="Write operation detected without explicit intent"
-                )
-
-        # Final validation
+        # 3️⃣ Final validation
         validate_sql(sql)
 
         return {"sql": sql}
 
-    except HTTPException:
-        raise
     except Exception as e:
         print("ERROR:", e)
         raise HTTPException(status_code=500, detail="SQL generation failed")

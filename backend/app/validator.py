@@ -1,17 +1,10 @@
 import re
 
-ALLOWED_START = (
-    "select",
-    "with"
-)
+ALLOWED_START = ("select", "with")
 
-DISALLOWED_KEYWORDS = [
-    "delete",
-    "update",
-    "insert",
-    "drop",
-    "truncate",
-    "alter"
+DISALLOWED = [
+    "delete", "update", "insert",
+    "drop", "truncate", "alter"
 ]
 
 def validate_sql(sql: str):
@@ -20,17 +13,14 @@ def validate_sql(sql: str):
     if not s:
         raise Exception("Empty SQL")
 
-    # Allow SELECT and WITH (CTE-based SELECT)
     if not s.startswith(ALLOWED_START):
-        raise Exception("Unsupported SQL statement")
+        raise Exception("Only SELECT statements allowed")
 
-    # Block destructive statements anywhere
-    for kw in DISALLOWED_KEYWORDS:
+    for kw in DISALLOWED:
         if re.search(rf"\b{kw}\b", s):
-            raise Exception("Destructive SQL is not allowed")
+            raise Exception("Destructive SQL blocked")
 
-    # Block stacked statements
     if ";" in s[:-1]:
-        raise Exception("Multiple SQL statements detected")
+        raise Exception("Multiple statements detected")
 
     return True

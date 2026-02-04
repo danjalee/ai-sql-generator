@@ -1,28 +1,28 @@
-WRITE_KEYWORDS = [
-    "delete", "remove", "insert", "add",
-    "update", "modify", "drop",
-    "truncate", "create", "alter"
-]
+from enum import Enum
 
-def detect_operation(criteria: str) -> str:
+class Pattern(str, Enum):
+    TOP_PER_GROUP = "TOP_PER_GROUP"
+    ANTI_JOIN = "ANTI_JOIN"
+    ZERO_ROW = "ZERO_ROW"
+    DEDUP = "DEDUP"
+    SIMPLE_SELECT = "SIMPLE_SELECT"
+
+
+def detect_patterns(criteria: str) -> set[Pattern]:
     c = criteria.lower()
-    if any(w in c for w in WRITE_KEYWORDS):
-        return "WRITE"
-    return "READ"
+    patterns = set()
 
+    if any(w in c for w in ["highest", "maximum", "max", "top", "largest"]):
+        patterns.add(Pattern.TOP_PER_GROUP)
 
-def detect_pattern(criteria: str) -> str | None:
-    c = criteria.lower()
+    if any(w in c for w in ["never", "not ordered", "no record", "missing"]):
+        patterns.add(Pattern.ANTI_JOIN)
+        patterns.add(Pattern.ZERO_ROW)
 
     if "duplicate" in c:
-        return "DEDUPLICATION"
-    if "latest" in c or "most recent" in c:
-        return "LATEST_PER_GROUP"
-    if "never" in c or "not ordered" in c:
-        return "ANTI_JOIN"
-    if "all" in c:
-        return "ALL_CONDITION"
-    if "highest" in c or "maximum" in c:
-        return "TOP_PER_GROUP"
+        patterns.add(Pattern.DEDUP)
 
-    return None
+    if not patterns:
+        patterns.add(Pattern.SIMPLE_SELECT)
+
+    return patterns
