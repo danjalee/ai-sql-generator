@@ -15,26 +15,8 @@ def call_llm(prompt: str) -> str:
         timeout=60
     )
     response.raise_for_status()
-    return response.json()["response"].strip().rstrip(";")
 
-def verify_and_fix(sql: str, schema: str, criteria: str) -> str:
-    prompt = f"""
-Check whether the SQL satisfies the question.
-
-If WRONG → return FIXED SQL.
-If CORRECT → return SAME SQL.
-
-STRICT:
-- SQL ONLY
-- No explanation
-
-Schema:
-{schema}
-
-Question:
-{criteria}
-
-SQL:
-{sql}
-"""
-    return call_llm(prompt)
+    raw = response.json().get("response", "").strip()
+    if "```" in raw:
+        raw = raw.split("```")[1].strip()
+    return raw.rstrip(";")

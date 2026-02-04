@@ -5,12 +5,10 @@ def execute_sql(schema: str, sql: str):
     cur = conn.cursor()
 
     try:
-        # Create tables
         for stmt in schema.split(";"):
             if stmt.strip():
                 cur.execute(stmt)
 
-        # Run generated SQL
         cur.execute(sql)
         rows = cur.fetchall()
 
@@ -18,6 +16,5 @@ def execute_sql(schema: str, sql: str):
             "row_count": len(rows),
             "columns": [d[0] for d in cur.description]
         }
-
     finally:
         conn.close()

@@ -18,7 +18,7 @@ def validate_sql(sql: str):
 
     for kw in DISALLOWED:
         if re.search(rf"\b{kw}\b", s):
-            raise Exception("Destructive SQL blocked")
+            raise Exception("Destructive SQL not allowed")
 
     if ";" in s[:-1]:
         raise Exception("Multiple statements detected")

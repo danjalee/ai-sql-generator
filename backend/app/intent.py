@@ -10,13 +10,15 @@ class Pattern(str, Enum):
 
 
 def detect_patterns(criteria: str) -> set[Pattern]:
-    """
-    Rule-based SQL pattern detection.
-    This is deterministic and safe (no LLM here).
-    """
-
     c = criteria.lower()
     patterns: set[Pattern] = set()
+
+    # ---------- ZERO ROW / ALL COMBINATIONS ----------
+    if any(w in c for w in [
+        "each", "every", "even if", "including",
+        "including zero", "all students", "all users"
+    ]):
+        patterns.add(Pattern.ZERO_ROW)
 
     # ---------- TOP PER GROUP ----------
     if any(w in c for w in [
@@ -25,7 +27,7 @@ def detect_patterns(criteria: str) -> set[Pattern]:
     ]):
         patterns.add(Pattern.TOP_PER_GROUP)
 
-    # ---------- ANTI JOIN / ZERO ROW ----------
+    # ---------- ANTI JOIN ----------
     if any(w in c for w in [
         "never", "not ordered", "no record",
         "missing", "without", "did not"
@@ -33,10 +35,9 @@ def detect_patterns(criteria: str) -> set[Pattern]:
         patterns.add(Pattern.ANTI_JOIN)
         patterns.add(Pattern.ZERO_ROW)
 
-    # ---------- DEDUPLICATION ----------
+    # ---------- DEDUP ----------
     if any(w in c for w in [
-        "duplicate", "duplicates", "unique",
-        "remove duplicate"
+        "duplicate", "duplicates", "remove duplicate"
     ]):
         patterns.add(Pattern.DEDUP)
 
