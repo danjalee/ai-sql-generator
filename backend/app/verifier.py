@@ -3,9 +3,6 @@ from app.intent import Pattern
 
 
 def verify_sql(sql: str, patterns: set[Pattern]) -> None:
-    """
-    Raises ValueError if SQL violates intent-aware rules
-    """
     errors = []
     s = sql.lower()
 
@@ -19,21 +16,27 @@ def verify_sql(sql: str, patterns: set[Pattern]) -> None:
     # TOP PER GROUP
     # ----------------------------
     if Pattern.TOP_PER_GROUP in patterns:
-        if "limit" in s:
-            errors.append("TOP_PER_GROUP: LIMIT is not allowed (ties must be returned).")
+        if "sum(" not in s:
+            errors.append("TOP_PER_GROUP: SUM() must be used for aggregation.")
 
-        if re.search(r"max\s*\(\s*amount\s*\)", s):
-            errors.append("TOP_PER_GROUP: Use SUM(amount), not MAX(amount).")
-
-        if "sum(amount)" not in s:
-            errors.append("TOP_PER_GROUP: SUM(amount) is required.")
+    # ----------------------------
+    # ALL TIES REQUIRED
+    # ----------------------------
+    if Pattern.REQUIRE_ALL_TIES in patterns:
+        if "limit" in s or "fetch first" in s:
+            errors.append(
+                "REQUIRE_ALL_TIES: LIMIT / FETCH FIRST is forbidden. "
+                "All ties must be returned."
+            )
 
     # ----------------------------
     # DISTINCT DATE
     # ----------------------------
     if Pattern.DISTINCT_DATE in patterns:
-        if "count(distinct" not in s:
-            errors.append("DISTINCT_DATE: Must use COUNT(DISTINCT date_column).")
+        if not re.search(r"count\s*\(\s*distinct", s):
+            errors.append(
+                "DISTINCT_DATE: COUNT(DISTINCT date_column) is required."
+            )
 
     # ----------------------------
     # ZERO ROW / ALL USERS
@@ -41,7 +44,6 @@ def verify_sql(sql: str, patterns: set[Pattern]) -> None:
     if Pattern.ZERO_ROW in patterns or Pattern.ALL_USERS in patterns:
         if "left join" not in s:
             errors.append("ZERO_ROW / ALL_USERS: LEFT JOIN is required.")
-
         if "coalesce" not in s:
             errors.append("ZERO_ROW / ALL_USERS: COALESCE is required.")
 

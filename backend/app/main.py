@@ -8,6 +8,7 @@ from app.strategy import STRATEGY_RULES
 from app.validator import validate_sql
 from app.verifier import verify_sql
 from app.dialects import DIALECT_RULES
+from app.rewriter import rewrite_criteria
 
 
 # ============================
@@ -31,6 +32,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # ============================
 # Security
@@ -60,20 +62,30 @@ def call_llm(prompt: str) -> str:
         },
         timeout=40
     )
+
     response.raise_for_status()
 
     raw = response.json().get("response", "").strip()
 
+    # strip markdown if model adds it
     if "```" in raw:
         raw = raw.split("```")[1].strip()
 
     return raw.rstrip(";")
+
 
 # ============================
 # Prompt builder
 # ============================
 def build_prompt(req: SQLRequest) -> str:
     patterns = detect_patterns(req.criteria)
+
+    # rewrite ambiguous questions
+    rewritten_criteria = rewrite_criteria(
+        req.criteria,
+        patterns,
+        req.language
+    )
 
     strategy_text = "\n".join(
         STRATEGY_RULES[p] for p in patterns if p in STRATEGY_RULES
@@ -105,7 +117,7 @@ SCHEMA:
 {req.schema}
 
 QUESTION:
-{req.criteria}
+{rewritten_criteria}
 """
 
 
@@ -118,7 +130,7 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
 
     patterns = detect_patterns(req.criteria)
 
-    # --- First attempt ---
+    # -------- first attempt --------
     sql = call_llm(build_prompt(req))
 
     try:
@@ -127,7 +139,7 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
         return {"sql": sql}
 
     except Exception as e:
-        # --- One controlled repair attempt ---
+        # -------- one controlled repair --------
         fix_prompt = f"""
 The following SQL is INVALID:
 

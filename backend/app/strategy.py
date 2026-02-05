@@ -2,9 +2,13 @@ from app.intent import Pattern
 
 STRATEGY_RULES = {
     Pattern.TOP_PER_GROUP: """
-- Return ALL ties
-- NEVER use LIMIT
-- Use SUM() for totals, NOT MAX()
+- Aggregate values using SUM()
+- Compare against the maximum aggregated value
+""",
+
+    Pattern.REQUIRE_ALL_TIES: """
+- Return ALL rows that share the maximum value
+- NEVER use LIMIT or FETCH FIRST
 """,
 
     Pattern.ANTI_JOIN: """
@@ -15,7 +19,7 @@ STRATEGY_RULES = {
     Pattern.ZERO_ROW: """
 - Include rows with zero matches
 - Use LEFT JOIN
-- Use COALESCE for zero values
+- Use COALESCE(...) for zero values
 """,
 
     Pattern.DISTINCT_DATE: """
@@ -28,11 +32,11 @@ STRATEGY_RULES = {
 """,
 
     Pattern.DEDUP: """
-- Remove duplicates using GROUP BY or DISTINCT
+- Remove duplicates using DISTINCT or GROUP BY
 """,
 
     Pattern.SIMPLE_SELECT: """
 - Single SELECT
-- No WITH
+- No WITH clause
 """
 }
