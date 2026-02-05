@@ -6,7 +6,9 @@ from pydantic import BaseModel
 from app.intent import detect_patterns, Pattern
 from app.strategy import STRATEGY_RULES
 from app.validator import validate_sql
+from app.verifier import verify_sql
 from app.dialects import DIALECT_RULES
+
 
 # ============================
 # Request model
@@ -109,6 +111,7 @@ QUESTION:
 {req.criteria}
 """
 
+
 # ============================
 # Endpoint
 # ============================
@@ -117,12 +120,17 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
     verify_api_key(x_api_key)
 
     try:
+        patterns = detect_patterns(req.criteria)
+
         sql = call_llm(build_prompt(req))
-        validate_sql(sql)
+
+        validate_sql(sql)           # syntax / safety
+        verify_sql(sql, patterns)   # intent-aware rules
+
         return {"sql": sql}
 
     except HTTPException:
         raise
     except Exception as e:
         print("ERROR:", e)
-        raise HTTPException(status_code=500, detail="SQL generation failed")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -12,16 +12,30 @@ def detect_patterns(criteria: str) -> set[Pattern]:
     c = criteria.lower()
     patterns: set[Pattern] = set()
 
-    if any(w in c for w in ["highest", "maximum", "max", "top", "most"]):
+    # Top per group / max / highest
+    if any(w in c for w in [
+        "highest", "maximum", "max", "top",
+        "most", "largest", "best"
+    ]):
         patterns.add(Pattern.TOP_PER_GROUP)
 
-    if any(w in c for w in ["never", "no record", "missing", "without", "did not"]):
+    # Anti-join / missing rows
+    if any(w in c for w in [
+        "never", "no record", "missing",
+        "without", "did not", "not placed",
+        "no orders", "no purchases"
+    ]):
         patterns.add(Pattern.ANTI_JOIN)
         patterns.add(Pattern.ZERO_ROW)
 
-    if any(w in c for w in ["duplicate", "duplicates", "unique"]):
+    # Deduplication
+    if any(w in c for w in [
+        "duplicate", "duplicates", "unique",
+        "remove duplicates"
+    ]):
         patterns.add(Pattern.DEDUP)
 
+    # Default fallback
     if not patterns:
         patterns.add(Pattern.SIMPLE_SELECT)
 
