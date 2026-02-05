@@ -116,18 +116,43 @@ QUESTION:
 def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
     verify_api_key(x_api_key)
 
+    patterns = detect_patterns(req.criteria)
+
+    # --- First attempt ---
+    sql = call_llm(build_prompt(req))
+
     try:
-        patterns = detect_patterns(req.criteria)
-
-        sql = call_llm(build_prompt(req))
-
-        validate_sql(sql)           # syntax / safety
-        verify_sql(sql, patterns)   # semantic correctness
-
+        validate_sql(sql)
+        verify_sql(sql, patterns)
         return {"sql": sql}
 
-    except HTTPException:
-        raise
     except Exception as e:
-        print("ERROR:", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        # --- One controlled repair attempt ---
+        fix_prompt = f"""
+The following SQL is INVALID:
+
+{sql}
+
+ERROR:
+{str(e)}
+
+Fix the SQL.
+
+Rules:
+- Output ONE SQL statement only
+- SQL ONLY
+- MUST start with SELECT
+- Remove the cause of the error
+- Follow all original constraints
+"""
+
+        sql = call_llm(fix_prompt)
+
+        try:
+            validate_sql(sql)
+            verify_sql(sql, patterns)
+            return {"sql": sql}
+
+        except Exception as final_error:
+            print("FINAL ERROR:", final_error)
+            raise HTTPException(status_code=500, detail=str(final_error))
