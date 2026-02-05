@@ -6,6 +6,8 @@ class Pattern(str, Enum):
     ZERO_ROW = "ZERO_ROW"
     DEDUP = "DEDUP"
     SIMPLE_SELECT = "SIMPLE_SELECT"
+    DISTINCT_DATE = "DISTINCT_DATE"
+    ALL_USERS = "ALL_USERS"
 
 
 def detect_patterns(criteria: str) -> set[Pattern]:
@@ -15,7 +17,7 @@ def detect_patterns(criteria: str) -> set[Pattern]:
     # Top per group / max / highest
     if any(w in c for w in [
         "highest", "maximum", "max", "top",
-        "most", "largest", "best"
+        "most", "largest", "best", "spent the most"
     ]):
         patterns.add(Pattern.TOP_PER_GROUP)
 
@@ -26,6 +28,18 @@ def detect_patterns(criteria: str) -> set[Pattern]:
         "no orders", "no purchases"
     ]):
         patterns.add(Pattern.ANTI_JOIN)
+        patterns.add(Pattern.ZERO_ROW)
+
+    # Distinct date logic
+    if any(w in c for w in [
+        "distinct day", "different day",
+        "more than one day"
+    ]):
+        patterns.add(Pattern.DISTINCT_DATE)
+
+    # All users
+    if "all users" in c:
+        patterns.add(Pattern.ALL_USERS)
         patterns.add(Pattern.ZERO_ROW)
 
     # Deduplication

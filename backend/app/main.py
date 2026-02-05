@@ -43,7 +43,7 @@ def verify_api_key(x_api_key: str = Header(None)):
 
 
 # ============================
-# LLM call (FAST + deterministic)
+# LLM call
 # ============================
 def call_llm(prompt: str) -> str:
     response = requests.post(
@@ -70,7 +70,7 @@ def call_llm(prompt: str) -> str:
     return raw.rstrip(";")
 
 # ============================
-# Prompt builder (ANTI-WITH)
+# Prompt builder
 # ============================
 def build_prompt(req: SQLRequest) -> str:
     patterns = detect_patterns(req.criteria)
@@ -80,7 +80,6 @@ def build_prompt(req: SQLRequest) -> str:
     )
 
     dialect_rule = DIALECT_RULES.get(req.database, "")
-
     simple = Pattern.SIMPLE_SELECT in patterns
 
     return f"""
@@ -92,9 +91,7 @@ ABSOLUTE RULES:
 - MUST start with SELECT
 - DO NOT use WITH unless strictly necessary
 - DO NOT use LIMIT unless explicitly requested
-- DO NOT use CREATE, INSERT, UPDATE, DELETE
 - Use ONLY tables and columns from schema
-- Prefer the SIMPLEST possible query
 
 {"DO NOT use JOIN unless required." if simple else ""}
 
@@ -125,7 +122,7 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
         sql = call_llm(build_prompt(req))
 
         validate_sql(sql)           # syntax / safety
-        verify_sql(sql, patterns)   # intent-aware rules
+        verify_sql(sql, patterns)   # semantic correctness
 
         return {"sql": sql}
 

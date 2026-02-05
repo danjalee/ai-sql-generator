@@ -3,8 +3,8 @@ from app.intent import Pattern
 STRATEGY_RULES = {
     Pattern.TOP_PER_GROUP: """
 - Return ALL ties
-- Do NOT use LIMIT
-- Use subquery with MAX() OR window functions
+- NEVER use LIMIT
+- Use SUM() for totals, NOT MAX()
 """,
 
     Pattern.ANTI_JOIN: """
@@ -15,7 +15,16 @@ STRATEGY_RULES = {
     Pattern.ZERO_ROW: """
 - Include rows with zero matches
 - Use LEFT JOIN
-- Use COUNT(column), NOT COUNT(*)
+- Use COALESCE for zero values
+""",
+
+    Pattern.DISTINCT_DATE: """
+- Use COUNT(DISTINCT date_column)
+""",
+
+    Pattern.ALL_USERS: """
+- Preserve all users
+- LEFT JOIN required
 """,
 
     Pattern.DEDUP: """
@@ -25,6 +34,5 @@ STRATEGY_RULES = {
     Pattern.SIMPLE_SELECT: """
 - Single SELECT
 - No WITH
-- No unnecessary JOIN
 """
 }
