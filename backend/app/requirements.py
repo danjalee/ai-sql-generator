@@ -10,7 +10,7 @@ class Requirement:
 
 REQUIREMENTS = {
     Pattern.TOP_PER_GROUP: Requirement(
-        must_use={"sum("},
+        must_use={"dense_rank(", "rank("},
         forbidden={"limit", "fetch first"}
     ),
 

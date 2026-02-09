@@ -16,8 +16,14 @@ def verify_sql(sql: str, patterns: set[Pattern]) -> None:
     # TOP PER GROUP
     # ----------------------------
     if Pattern.TOP_PER_GROUP in patterns:
-        if "sum(" not in s:
-            errors.append("TOP_PER_GROUP: SUM() must be used for aggregation.")
+        has_dense_rank = re.search(r"\bdense_rank\s*\(", s)
+        has_rank = re.search(r"\brank\s*\(", s)
+        if not (has_dense_rank or has_rank):
+            errors.append("TOP_PER_GROUP: DENSE_RANK() or RANK() required.")
+        if "partition by" not in s:
+            errors.append("TOP_PER_GROUP: PARTITION BY required.")
+        if "order by" not in s:
+            errors.append("TOP_PER_GROUP: ORDER BY required.")
 
     # ----------------------------
     # ALL TIES REQUIRED

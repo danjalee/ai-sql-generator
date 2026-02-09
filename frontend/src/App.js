@@ -112,9 +112,24 @@ function App() {
         })
       });
 
-      if (!res.ok) throw new Error();
-      const data = await res.json();
-      setOutput(data.sql || "");
+      if (!res.ok) {
+        try {
+          const errBody = await res.text();
+          let msg = "Failed to generate SQL";
+          try {
+            const parsed = JSON.parse(errBody);
+            msg = parsed.detail || msg;
+          } catch (_) {
+            msg = errBody || msg;
+          }
+          setOutput(msg);
+        } catch {
+          setOutput("Failed to generate SQL");
+        }
+      } else {
+        const data = await res.json();
+        setOutput(data.sql || "");
+      }
     } catch (err) {
       if (err.name !== "AbortError") {
         setOutput("Failed to generate SQL");

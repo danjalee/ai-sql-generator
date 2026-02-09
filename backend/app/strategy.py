@@ -2,8 +2,9 @@ from app.intent import Pattern
 
 STRATEGY_RULES = {
     Pattern.TOP_PER_GROUP: """
-- Aggregate values using SUM()
-- Compare against the maximum aggregated value
+- Use window functions per department
+- DENSE_RANK() or RANK() over (PARTITION BY department ORDER BY salary DESC)
+- Return rows where rank <= requested top N
 """,
 
     Pattern.REQUIRE_ALL_TIES: """

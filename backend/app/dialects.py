@@ -3,6 +3,7 @@ DIALECT_RULES = {
 - COALESCE(...) for zero handling
 - DATE functions: DATE(), DATE_FORMAT(...) as needed
 - LIMIT n for pagination (only if explicitly requested)
+- Avoid reserved/keyword aliases; prefer rnk over rank for window functions
 """,
     "postgresql": """Use PostgreSQL syntax.
 - COALESCE(...) for zero handling

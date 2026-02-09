@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from app.intent import detect_patterns, Pattern
 from app.strategy import STRATEGY_RULES
-from app.validator import validate_sql, validate_schema_references
+from app.validator import validate_sql, validate_schema_references, parse_schema
 from app.verifier import verify_sql
 from app.dialects import DIALECT_RULES
 from app.rewriter import rewrite_criteria
@@ -105,6 +105,11 @@ def build_prompt(req: SQLRequest) -> str:
 
     dialect_rule = DIALECT_RULES.get(req.database, "")
     simple = Pattern.SIMPLE_SELECT in patterns
+    # summarize schema in a compact form to reduce hallucinations
+    schema_map = parse_schema(req.schema)
+    tables_summary = "\n".join(
+        f"- {tbl}({', '.join(sorted(cols))})" for tbl, cols in schema_map.items()
+    )
 
     return f"""
 You are an expert SQL problem solver.
@@ -116,6 +121,8 @@ ABSOLUTE RULES:
 - DO NOT use WITH unless strictly necessary
 - DO NOT use LIMIT unless explicitly requested
 - Use ONLY tables and columns from schema
+- Use ONLY the following TABLES and COLUMNS:
+{tables_summary}
 
 {"DO NOT use JOIN unless required." if simple else ""}
 
@@ -150,7 +157,8 @@ def generate_sql(req: SQLRequest, x_api_key: str = Header(None)):
         validate_schema_references(req.schema, sql)
         verify_sql(sql, patterns)
         if req.database.lower() == "sqlite":
-            execute_sql(req.schema, sql)
+            if parse_schema(req.schema):
+                execute_sql(req.schema, sql)
         return {"sql": sql}
 
     except Exception as e:
@@ -206,7 +214,8 @@ Schema:
             validate_schema_references(req.schema, sql)
             verify_sql(sql, patterns)
             if req.database.lower() == "sqlite":
-                execute_sql(req.schema, sql)
+                if parse_schema(req.schema):
+                    execute_sql(req.schema, sql)
             return {"sql": sql}
 
         except Exception as final_error:

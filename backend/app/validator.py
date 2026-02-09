@@ -75,14 +75,23 @@ def validate_schema_references(schema: str, sql: str) -> None:
     errors: list[str] = []
 
     ast_tables: set[str] = set()
+    ast_table_list: list[str] = []
     ast_qualified: list[tuple[str, str]] = []
     ast_bare_cols: set[str] = set()
+    ast_aliases: set[str] = set()
     try:
         import sqlglot
         from sqlglot import exp
         tree = sqlglot.parse_one(s)
         for t in tree.find_all(exp.Table):
-            ast_tables.add(_sanitize_identifier(t.name).lower())
+            base = _sanitize_identifier(t.name).lower()
+            ast_tables.add(base)
+            ast_table_list.append(base)
+            if t.alias and t.alias.name:
+                ast_aliases.add(_sanitize_identifier(t.alias.name).lower())
+        for sq in tree.find_all(exp.Subquery):
+            if sq.alias and sq.alias.name:
+                ast_aliases.add(_sanitize_identifier(sq.alias.name).lower())
         for c in tree.find_all(exp.Column):
             if c.table:
                 ast_qualified.append((_sanitize_identifier(str(c.table)), _sanitize_identifier(c.name)))
@@ -96,10 +105,18 @@ def validate_schema_references(schema: str, sql: str) -> None:
     used_tables: set[str] = set(_sanitize_identifier(t).lower() for t in from_join)
     if ast_tables:
         used_tables |= ast_tables
+    # capture subquery aliases via regex as well
+    for alias in re.findall(r"(?:from|join)\s*\([^)]+\)\s+(?:as\s+)?([a-zA-Z_][\w]*)", s, flags=re.IGNORECASE | re.DOTALL):
+        ast_aliases.add(_sanitize_identifier(alias).lower())
+    # remove aliases and artifacts from used_tables
+    used_tables = {t for t in used_tables if t and t not in ast_aliases and t not in {"(", ")"}}
     # verify tables exist
     unknown_tables = [t for t in used_tables if t not in tables]
+    unknown_ast_tables = [t for t in ast_tables if t not in tables]
     if unknown_tables:
         errors.append(f"Unknown table(s) referenced: {', '.join(sorted(set(unknown_tables)))}")
+    if unknown_ast_tables:
+        errors.append(f"Unknown table(s) referenced (AST): {', '.join(sorted(set(unknown_ast_tables)))}")
 
     # verify qualified column references table.column
     qualified = [(tbl, col) for tbl, col in re.findall(r"([a-zA-Z_][\w]*)\s*\.\s*([a-zA-Z_][\w]*)", low)]
@@ -107,6 +124,15 @@ def validate_schema_references(schema: str, sql: str) -> None:
     for tbl, col in qualified:
         t = _sanitize_identifier(tbl).lower()
         c = _sanitize_identifier(col).lower()
+        # if referencing an alias (including subquery alias), skip table existence check
+        if t in ast_aliases:
+            continue
+        # if this looks like a subquery alias in SQL text, skip
+        try:
+            if re.search(rf"\)\s+(?:as\s+)?{re.escape(t)}\b", s, flags=re.IGNORECASE):
+                continue
+        except re.error:
+            pass
         if t not in tables:
             errors.append(f"Unknown table in column reference: {tbl}.{col}")
             continue
@@ -114,12 +140,19 @@ def validate_schema_references(schema: str, sql: str) -> None:
             errors.append(f"Unknown column '{col}' in table '{tbl}'")
 
     # if multiple tables used, flag ambiguous bare columns if they exist in >1 tables
-    if len(used_tables) > 1:
+    # detect self-join: same base table repeated
+    repeated_bases = set([t for t in ast_table_list if ast_table_list.count(t) > 1])
+    multi_table_query = len(used_tables) > 1 or bool(repeated_bases) or " join " in low
+    if multi_table_query:
         all_cols: dict[str, int] = {}
         for cols in tables.values():
             for c in cols:
                 all_cols[c] = all_cols.get(c, 0) + 1
         ambiguous = {c for c, cnt in all_cols.items() if cnt > 1}
+        # in self-join, treat all columns of repeated base tables as ambiguous
+        for base in repeated_bases:
+            if base in tables:
+                ambiguous |= set(tables[base])
         for c in ambiguous:
             # bare occurrence (not part of table.column), approximate check
             if re.search(rf"\b{re.escape(c)}\b(?!\s*\.)", low):
@@ -128,7 +161,9 @@ def validate_schema_references(schema: str, sql: str) -> None:
         # single-table query: detect unknown bare columns
         # select the single table
         single_table = next(iter(used_tables)) if used_tables else None
-        if single_table and single_table in tables:
+        # if subqueries or aliases detected, skip bare column detection to avoid false positives
+        has_subquery = bool(re.search(r"\(\s*select", low))
+        if single_table and single_table in tables and not ast_aliases and not has_subquery:
             known_cols = tables[single_table]
             # detect alias in FROM clause to exclude it
             alias = None
@@ -152,6 +187,8 @@ def validate_schema_references(schema: str, sql: str) -> None:
             exclude = set(used_tables)
             if alias:
                 exclude.add(alias)
+            # exclude all AST-discovered aliases too (subqueries/table aliases)
+            exclude |= ast_aliases
             candidates = {t for t in candidates if t not in exclude and t not in qualified_cols}
             unknown_bare = {t for t in candidates if t not in known_cols}
             if unknown_bare:
