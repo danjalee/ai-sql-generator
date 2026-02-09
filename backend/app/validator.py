@@ -74,16 +74,37 @@ def validate_schema_references(schema: str, sql: str) -> None:
     low = s.lower()
     errors: list[str] = []
 
+    ast_tables: set[str] = set()
+    ast_qualified: list[tuple[str, str]] = []
+    ast_bare_cols: set[str] = set()
+    try:
+        import sqlglot
+        from sqlglot import exp
+        tree = sqlglot.parse_one(s)
+        for t in tree.find_all(exp.Table):
+            ast_tables.add(_sanitize_identifier(t.name).lower())
+        for c in tree.find_all(exp.Column):
+            if c.table:
+                ast_qualified.append((_sanitize_identifier(str(c.table)), _sanitize_identifier(c.name)))
+            else:
+                ast_bare_cols.add(_sanitize_identifier(c.name).lower())
+    except Exception:
+        pass
+
     # find tables used in FROM/JOIN
     from_join = re.findall(r"(?:from|join)\s+([^\s,;]+)", low, flags=re.IGNORECASE)
     used_tables: set[str] = set(_sanitize_identifier(t).lower() for t in from_join)
+    if ast_tables:
+        used_tables |= ast_tables
     # verify tables exist
     unknown_tables = [t for t in used_tables if t not in tables]
     if unknown_tables:
         errors.append(f"Unknown table(s) referenced: {', '.join(sorted(set(unknown_tables)))}")
 
     # verify qualified column references table.column
-    for tbl, col in re.findall(r"([a-zA-Z_][\w]*)\s*\.\s*([a-zA-Z_][\w]*)", low):
+    qualified = [(tbl, col) for tbl, col in re.findall(r"([a-zA-Z_][\w]*)\s*\.\s*([a-zA-Z_][\w]*)", low)]
+    qualified += ast_qualified
+    for tbl, col in qualified:
         t = _sanitize_identifier(tbl).lower()
         c = _sanitize_identifier(col).lower()
         if t not in tables:
@@ -116,6 +137,7 @@ def validate_schema_references(schema: str, sql: str) -> None:
                 alias = _sanitize_identifier(m_from.group(2)).lower()
             # collect all bare word tokens
             tokens = set(re.findall(r"\b([a-zA-Z_][\w]*)\b", low))
+            tokens |= ast_bare_cols
             # remove keywords and common functions
             KEYWORDS = {
                 "select","from","where","group","by","order","as","on","and","or","not","null",
@@ -126,6 +148,7 @@ def validate_schema_references(schema: str, sql: str) -> None:
             candidates = {t for t in tokens if t not in KEYWORDS}
             # exclude table names, alias, and columns already seen as qualified
             qualified_cols = {c for _, c in re.findall(r"([a-zA-Z_][\w]*)\s*\.\s*([a-zA-Z_][\w]*)", low)}
+            qualified_cols |= {c for _, c in ast_qualified}
             exclude = set(used_tables)
             if alias:
                 exclude.add(alias)
